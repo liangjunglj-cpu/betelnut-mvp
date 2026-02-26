@@ -1,8 +1,0 @@
-{
-    "name": "betelnut-monorepo",
-    "private": true,
-    "scripts": {
-        "postinstall": "cd client && npm install",
-        "build": "cd client && npm run build"
-    }
-}
