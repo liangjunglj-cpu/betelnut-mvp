@@ -1,0 +1,6 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Adding this ensures the DeckGL map takes up the whole screen without scrollbars */
+body { margin: 0; overflow: hidden; }
