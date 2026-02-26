@@ -1,18 +1,24 @@
-# Node
-client/node_modules/
-client/dist/
-client/.vite/
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
-# Python
-.venv/
-__pycache__/
-*.pyc
+node_modules
+dist
+dist-ssr
+*.local
 
-# Environment variables
-.env
-.env.local
-
-# OS Files
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
 .DS_Store
-Thumbs.db
-service-account.json
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
