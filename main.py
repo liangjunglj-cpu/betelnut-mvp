@@ -21,9 +21,11 @@ app.add_middleware(
 )
 
 import os
-from dotenv import load_dotenv
-
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    print("python-dotenv not found, relying on native environment variables.")
 
 # --- CONFIGURATION ---
 # Keys are safely loaded from the local .env file or Vercel Environment Variables
