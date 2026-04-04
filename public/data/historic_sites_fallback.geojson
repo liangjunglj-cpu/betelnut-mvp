@@ -1,0 +1,65 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "NAME": "Fort Canning Lighthouse", "DESCRIPTION": "Originally built in 1855, the lighthouse guided ships into the Singapore harbour." },
+      "geometry": { "type": "Point", "coordinates": [103.8459, 1.2949] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "NAME": "Tomb of Iskandar Shah", "DESCRIPTION": "Believed to be the burial site of the last ruler of the ancient Kingdom of Singapura." },
+      "geometry": { "type": "Point", "coordinates": [103.8462, 1.2943] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "NAME": "Former Ford Factory", "DESCRIPTION": "Site of the British surrender to the Japanese on 15 February 1942." },
+      "geometry": { "type": "Point", "coordinates": [103.7695, 1.3411] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "NAME": "Istana Kampong Glam", "DESCRIPTION": "Former royal residence of the Malay Sultan, built in 1843." },
+      "geometry": { "type": "Point", "coordinates": [103.8592, 1.3025] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "NAME": "Goodwood Park Hotel", "DESCRIPTION": "Built in 1900, originally the Teutonia Club for the German community. National Monument." },
+      "geometry": { "type": "Point", "coordinates": [103.8393, 1.3073] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "NAME": "Emerald Hill Shophouses", "DESCRIPTION": "Well-preserved Peranakan terrace houses dating from the 1900s-1920s along Emerald Hill Road." },
+      "geometry": { "type": "Point", "coordinates": [103.8386, 1.3034] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "NAME": "Sri Thendayuthapani Temple", "DESCRIPTION": "Hindu temple built in 1859, gazetted as a National Monument in 2014." },
+      "geometry": { "type": "Point", "coordinates": [103.8427, 1.3016] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "NAME": "Tan Yeok Nee House", "DESCRIPTION": "Built in 1885, one of the last surviving Chinese mansions in traditional southern Chinese architectural style." },
+      "geometry": { "type": "Point", "coordinates": [103.8394, 1.3005] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "NAME": "House of Tan Teng Niah", "DESCRIPTION": "Last surviving Chinese villa in Little India, built in 1900." },
+      "geometry": { "type": "Point", "coordinates": [103.8523, 1.3120] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "NAME": "National Museum of Singapore", "DESCRIPTION": "Oldest museum in Singapore, established in 1887. National Monument." },
+      "geometry": { "type": "Point", "coordinates": [103.8487, 1.2967] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "NAME": "Armenian Church", "DESCRIPTION": "Oldest surviving church in Singapore, designed by George Drumgoole Coleman in 1835." },
+      "geometry": { "type": "Point", "coordinates": [103.8496, 1.2943] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "NAME": "Raffles Hotel", "DESCRIPTION": "Established in 1887 by the Sarkies Brothers. National Monument since 1987." },
+      "geometry": { "type": "Point", "coordinates": [103.8545, 1.2953] }
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "type": "FeatureCollection",
+  "name": "OSM_Fallback_Parks_Attractions",
+  "features": [
+    { 
+      "type": "Feature", 
+      "properties": { "NAME": "Fort Canning Park", "_type": "park", "leisure": "park" }, 
+      "geometry": { "type": "Polygon", "coordinates": [ [ [ 103.844, 1.294 ], [ 103.848, 1.294 ], [ 103.848, 1.298 ], [ 103.844, 1.298 ], [ 103.844, 1.294 ] ] ] } 
+    },
+    { 
+      "type": "Feature", 
+      "properties": { "NAME": "National Gallery Singapore", "_type": "tourist-attraction", "tourism": "museum" }, 
+      "geometry": { "type": "Polygon", "coordinates": [ [ [ 103.851, 1.290 ], [ 103.853, 1.290 ], [ 103.853, 1.292 ], [ 103.851, 1.292 ], [ 103.851, 1.290 ] ] ] } 
+    }
+  ]
+}

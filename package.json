@@ -15,10 +15,19 @@
     "@deck.gl/layers": "^9.2.9",
     "@deck.gl/mesh-layers": "^9.2.9",
     "@deck.gl/react": "^9.2.9",
+    "@gltf-transform/core": "^4.3.0",
+    "@gltf-transform/functions": "^4.3.0",
+    "@loaders.gl/core": "^4.3.4",
+    "@loaders.gl/draco": "^4.3.4",
+    "@loaders.gl/gltf": "^4.3.4",
+    "@luma.gl/webgpu": "^9.2.6",
+    "@tailwindcss/typography": "^0.5.19",
     "deck.gl": "^9.2.9",
     "lucide-react": "^0.575.0",
+    "meshoptimizer": "^1.0.1",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "react-markdown": "^10.1.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
