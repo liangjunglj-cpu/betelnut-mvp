@@ -109,7 +109,11 @@ async def get_historic_sites():
 # --- Dynamic Traffic Simulation ---
 # Caches Overpass results by rounded bounding box to avoid redundant requests
 _traffic_cache = {}
-_traffic_axis_cache = {}
+_OVERPASS_ENDPOINTS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://lz4.overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+]
 
 
 class TrafficRequest(BaseModel):
@@ -169,117 +173,121 @@ def _select_dominant_axes(path_network, fallback_axes):
     return selected
 
 
-def _traffic_axis_cache_key(south, west, north, east):
-    center_lon = round((west + east) / 2, 2)
-    center_lat = round((south + north) / 2, 2)
-    span_lon = round(max(east - west, 0.002), 2)
-    span_lat = round(max(north - south, 0.002), 2)
-    return center_lon, center_lat, span_lon, span_lat
+def _split_path_by_direction(path, max_points_per_segment=8, angle_threshold=30):
+    if len(path) < 2:
+        return []
+
+    segments = []
+    current = [path[0], path[1]]
+    previous_axis = _segment_axis_degrees(path[0], path[1])
+
+    for point in path[2:]:
+        current_axis = _segment_axis_degrees(current[-1], point)
+        axis_delta = abs(current_axis - previous_axis)
+        axis_delta = min(axis_delta, 180 - axis_delta)
+
+        if axis_delta > angle_threshold or len(current) >= max_points_per_segment:
+            if len(current) >= 2:
+                segments.append(current)
+            current = [current[-1], point]
+            previous_axis = current_axis
+        else:
+            current.append(point)
+            previous_axis = current_axis
+
+    if len(current) >= 2:
+        segments.append(current)
+
+    return segments
 
 
-def _unit_vectors(axis_degrees):
-    theta = math.radians(axis_degrees)
-    direction = (math.cos(theta), math.sin(theta))
-    normal = (-direction[1], direction[0])
-    return direction, normal
+def _path_total_length(path):
+    return sum(_segment_length(start, end) for start, end in zip(path, path[1:]))
 
 
-def _build_axis_path(center, axis_degrees, offset, half_length, bounds, segments, wiggle_scale=0.0):
-    direction, normal = _unit_vectors(axis_degrees)
-    west, south, east, north = bounds
-    cx = center[0] + normal[0] * offset
-    cy = center[1] + normal[1] * offset
-    cx = _clamp(cx, west, east)
-    cy = _clamp(cy, south, north)
+def _normalize_path_network(path_network, dominant_axes, min_length=0.00025):
+    normalized = []
+    for path in path_network:
+        for segment in _split_path_by_direction(path):
+            length = _path_total_length(segment)
+            if length < min_length:
+                continue
 
-    def _limit(coord, delta, lower, upper):
-        if abs(delta) < 1e-9:
-            return float("inf")
-        return (upper - coord) / delta if delta > 0 else (lower - coord) / delta
+            axis = _segment_axis_degrees(segment[0], segment[-1])
+            if dominant_axes:
+                deltas = []
+                for dominant in dominant_axes[:2]:
+                    axis_delta = abs(axis - dominant)
+                    deltas.append(min(axis_delta, 180 - axis_delta))
+                if deltas and min(deltas) > 25:
+                    continue
 
-    forward_limit = min(
-        _limit(cx, direction[0], west, east),
-        _limit(cy, direction[1], south, north),
-    )
-    backward_limit = min(
-        _limit(cx, -direction[0], west, east),
-        _limit(cy, -direction[1], south, north),
-    )
-    usable_half_length = max(0.0, min(half_length, forward_limit, backward_limit) * 0.96)
-    path = []
+            normalized.append(segment)
 
-    for i in range(segments + 1):
-        t = i / segments
-        distance = -usable_half_length + (2 * usable_half_length * t)
-        lon = cx + direction[0] * distance
-        lat = cy + direction[1] * distance
-
-        if 0 < i < segments and wiggle_scale > 0:
-            lon += normal[0] * random.uniform(-wiggle_scale, wiggle_scale)
-            lat += normal[1] * random.uniform(-wiggle_scale, wiggle_scale)
-        path.append([lon, lat])
-
-    return path
+    return normalized
 
 
-def _build_axis_aligned_network(south, west, north, east, primary_axes, spacing_count, half_length_scale, segments, wiggle_scale):
-    lon_span = max(east - west, 0.002)
-    lat_span = max(north - south, 0.002)
-    center_lon = (west + east) / 2
-    center_lat = (south + north) / 2
-    bounds = (west, south, east, north)
-    center = ((west + east) / 2, (south + north) / 2)
-    base_length = max(lon_span, lat_span) * half_length_scale
-    base_spacing = max(lon_span, lat_span) / max(spacing_count, 1)
-    offsets = [((i - (spacing_count - 1) / 2) * base_spacing) for i in range(spacing_count)]
-    paths = []
+def _sample_real_path_network(path_network, target_count):
+    if not path_network:
+        return []
 
-    for axis in primary_axes:
-        for offset in offsets:
-            paths.append(_build_axis_path(center, axis, offset, base_length, bounds, segments, wiggle_scale))
+    weighted = [(path, _path_total_length(path)) for path in path_network]
+    total_weight = sum(weight for _, weight in weighted)
+    if total_weight <= 0:
+        return path_network[:target_count]
 
-    return paths
+    sampled = list(path_network)
+    while len(sampled) < target_count:
+        r = random.uniform(0, total_weight)
+        cumulative = 0.0
+        chosen = weighted[-1][0]
+        for path, weight in weighted:
+            cumulative += weight
+            if r <= cumulative:
+                chosen = path
+                break
+        sampled.append(chosen)
 
-
-def _build_synthetic_network(south, west, north, east, vehicle_axes=None, foot_axes=None):
-    vehicle_axes = list(vehicle_axes or (0.0, 90.0))
-    foot_axes = list(foot_axes or (vehicle_axes[0], _normalize_axis_degrees(vehicle_axes[0] + 90.0)))
-
-    vehicle_paths = _build_axis_aligned_network(
-        south, west, north, east, vehicle_axes[:2], spacing_count=3, half_length_scale=0.7, segments=6, wiggle_scale=0.0
-    )
-    foot_paths = _build_axis_aligned_network(
-        south, west, north, east, foot_axes[:2], spacing_count=4, half_length_scale=0.75, segments=8, wiggle_scale=0.00002
-    )
-    return vehicle_paths, foot_paths
+    return sampled
 
 
-def _build_fallback_traffic_result(request: TrafficRequest, reason: str, vehicle_axes=None, foot_axes=None):
-    axis_cache = _traffic_axis_cache.get(
-        _traffic_axis_cache_key(request.south, request.west, request.north, request.east),
-        {}
-    )
-    vehicle_paths, foot_paths = _build_synthetic_network(
-        request.south,
-        request.west,
-        request.north,
-        request.east,
-        vehicle_axes=vehicle_axes or axis_cache.get("vehicle_axes"),
-        foot_axes=foot_axes or axis_cache.get("foot_axes"),
-    )
+def _build_empty_traffic_result(request: TrafficRequest, reason: str):
     bbox = f"{request.south},{request.west},{request.north},{request.east}"
 
     return {
-        "vehicles": _generate_trips(vehicle_paths, 60, 2.0),
-        "foot": _generate_trips(foot_paths, 110, 0.5),
+        "vehicles": [],
+        "foot": [],
         "_meta": {
-            "vehicle_roads": len(vehicle_paths),
-            "foot_paths": len(foot_paths),
+            "vehicle_roads": 0,
+            "foot_paths": 0,
             "bbox": bbox,
-            "source": "synthetic-fallback",
+            "source": "empty-fallback",
             "reason": reason,
         }
     }
+
+
+def _fetch_overpass_json(query):
+    last_error = None
+    headers = {
+        "User-Agent": "Betelnut/1.0 (traffic-simulation)",
+        "Accept": "application/json",
+    }
+
+    for endpoint in _OVERPASS_ENDPOINTS:
+        try:
+            response = requests.post(
+                endpoint,
+                data={"data": query},
+                headers=headers,
+                timeout=20,
+            )
+            response.raise_for_status()
+            return response.json(), endpoint
+        except Exception as exc:
+            last_error = exc
+
+    raise last_error or RuntimeError("No Overpass endpoint available")
 
 def _haversine_deg(lon1, lat1, lon2, lat2):
     """Returns approximate distance in degrees (rough, for weighting only)."""
@@ -373,7 +381,6 @@ async def simulate_traffic(request: TrafficRequest):
 
     try:
         bbox = f"{request.south},{request.west},{request.north},{request.east}"
-        axis_cache_key = _traffic_axis_cache_key(request.south, request.west, request.north, request.east)
 
         # Fetch road + footpath geometry from Overpass (OSM)
         query = f"""
@@ -387,13 +394,7 @@ async def simulate_traffic(request: TrafficRequest):
         out skel qt;
         """
 
-        overpass_res = requests.post(
-            "https://overpass-api.de/api/interpreter",
-            data={"data": query},
-            timeout=30
-        )
-        overpass_res.raise_for_status()
-        osm_data = overpass_res.json()
+        osm_data, overpass_endpoint = _fetch_overpass_json(query)
 
         # Parse nodes
         nodes = {}
@@ -417,7 +418,7 @@ async def simulate_traffic(request: TrafficRequest):
                 foot_paths.append(coords)
 
         if not vehicle_paths and not foot_paths:
-            result = _build_fallback_traffic_result(request, "no-osm-paths")
+            result = _build_empty_traffic_result(request, "no-osm-paths")
             _traffic_cache[cache_key] = result
             return result
 
@@ -426,24 +427,17 @@ async def simulate_traffic(request: TrafficRequest):
             foot_paths,
             fallback_axes=(vehicle_axes[0], _normalize_axis_degrees(vehicle_axes[0] + 90.0))
         )
-        _traffic_axis_cache[axis_cache_key] = {
-            "vehicle_axes": vehicle_axes,
-            "foot_axes": foot_axes,
-        }
 
-        if len(vehicle_paths) < 4 or len(foot_paths) < 6:
-            synthetic_vehicle_paths, synthetic_foot_paths = _build_synthetic_network(
-                request.south,
-                request.west,
-                request.north,
-                request.east,
-                vehicle_axes=vehicle_axes,
-                foot_axes=foot_axes,
-            )
-            if len(vehicle_paths) < 4:
-                vehicle_paths.extend(synthetic_vehicle_paths[:4 - len(vehicle_paths)])
-            if len(foot_paths) < 6:
-                foot_paths.extend(synthetic_foot_paths[:6 - len(foot_paths)])
+        vehicle_paths = _normalize_path_network(vehicle_paths, vehicle_axes)
+        foot_paths = _normalize_path_network(foot_paths, foot_axes)
+
+        if not vehicle_paths and not foot_paths:
+            result = _build_empty_traffic_result(request, "no-normalized-paths")
+            _traffic_cache[cache_key] = result
+            return result
+
+        vehicle_paths = _sample_real_path_network(vehicle_paths, target_count=max(len(vehicle_paths), 12))
+        foot_paths = _sample_real_path_network(foot_paths, target_count=max(len(foot_paths), 18))
 
         # Collect POI points for weighting (simple: use viewport center area)
         # In production this would query cached POI data; for now we pass empty
@@ -465,6 +459,7 @@ async def simulate_traffic(request: TrafficRequest):
                 "foot_paths": len(foot_paths),
                 "bbox": bbox,
                 "source": "osm",
+                "endpoint": overpass_endpoint,
             }
         }
 
@@ -475,7 +470,7 @@ async def simulate_traffic(request: TrafficRequest):
 
     except Exception as e:
         print(f"Traffic Simulation Error: {e}")
-        fallback = _build_fallback_traffic_result(request, type(e).__name__)
+        fallback = _build_empty_traffic_result(request, type(e).__name__)
         _traffic_cache[cache_key] = fallback
         return fallback
 

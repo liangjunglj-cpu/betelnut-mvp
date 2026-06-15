@@ -97,3 +97,10 @@
 - Tightened the frontend request cadence in `src/App.jsx` by querying from a flat north-up viewport envelope, removing pitch/bearing-triggered refreshes, and increasing the debounce so traffic fetches are less likely to hammer the upstream service during navigation.
 - Reworked the fallback/supplement generator in `api/index.py` to derive dominant traffic axes from available real road segments, cache those local axes, and synthesize additional trips along those bearings instead of drawing a free-form grid.
 - Corrected the rotated synthetic path math so paths are fit inside the requested bounds before sampling rather than being clipped afterward, which had been creating misleading horizontal and vertical artifacts.
+
+## Traffic Geometry Hardening
+
+- A further user review showed that even the improved fallback could still read as incorrect movement when the live road fetch failed.
+- Reworked `api/index.py` to prefer actual OSM-derived geometry only: it now retries across multiple Overpass endpoints, splits fetched ways into straighter traversable segments, filters them against dominant local axes, and samples only from those real segments.
+- Removed invented synthetic traffic from the failure path. When no trustworthy path network is available, `/api/traffic/simulate` now returns empty traffic instead of misleading lines.
+- Verified the backend compile still passes, verified the path-normalization helpers keep only coherent axis-aligned segments in a direct Python check, and verified the frontend build still passes outside the sandbox.
