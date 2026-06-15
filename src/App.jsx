@@ -42,6 +42,7 @@ export default function App() {
   const [trafficData, setTrafficData] = useState({ vehicles: [], foot: [] });
   const [isTrafficLoading, setIsTrafficLoading] = useState(false);
   const trafficRequestIdRef = useRef(0);
+  const lastTrafficKeyRef = useRef('');
 
   // DYNAMIC TRAFFIC FETCHING: Re-fetch trip simulation based on viewport bounds
   useEffect(() => {
@@ -56,10 +57,17 @@ export default function App() {
         longitude: viewState.longitude,
         latitude: viewState.latitude,
         zoom: viewState.zoom,
-        pitch: viewState.pitch,
-        bearing: viewState.bearing
+        pitch: 0,
+        bearing: 0
       });
       const bounds = viewport.getBounds(); // [minLng, minLat, maxLng, maxLat]
+      const trafficKey = [
+        viewState.longitude.toFixed(3),
+        viewState.latitude.toFixed(3),
+        viewState.zoom.toFixed(2)
+      ].join(':');
+      if (trafficKey === lastTrafficKeyRef.current) return;
+      lastTrafficKeyRef.current = trafficKey;
       const requestId = ++trafficRequestIdRef.current;
       controller = new AbortController();
 
@@ -93,7 +101,7 @@ export default function App() {
             setIsTrafficLoading(false);
           }
         });
-    }, 500); // 500ms debounce
+    }, 1100); // wait for the user to settle on an area before querying roads
 
     return () => {
       clearTimeout(timer);
@@ -103,8 +111,6 @@ export default function App() {
     viewState.longitude,
     viewState.latitude,
     viewState.zoom,
-    viewState.pitch,
-    viewState.bearing,
     activeLayers.footTraffic,
     activeLayers.vehicleTraffic
   ]);

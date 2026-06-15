@@ -90,3 +90,10 @@
 - Verified `python -m py_compile api/index.py` passed.
 - Verified `npm run build` passed when rerun outside the sandbox after the known Windows `spawn EPERM` restriction blocked the sandboxed build.
 - Verified the new fallback generator responds to different bboxes with different coordinates by comparing Orchard-area and Marina Bay sample bounds through a direct Python check.
+
+## Traffic Axis Follow-up
+
+- Production runtime logs on June 15, 2026 confirmed `/api/traffic/simulate` was still frequently hitting upstream road-fetch errors, which meant users were often seeing fallback traffic geometry rather than real OSM-aligned paths.
+- Tightened the frontend request cadence in `src/App.jsx` by querying from a flat north-up viewport envelope, removing pitch/bearing-triggered refreshes, and increasing the debounce so traffic fetches are less likely to hammer the upstream service during navigation.
+- Reworked the fallback/supplement generator in `api/index.py` to derive dominant traffic axes from available real road segments, cache those local axes, and synthesize additional trips along those bearings instead of drawing a free-form grid.
+- Corrected the rotated synthetic path math so paths are fit inside the requested bounds before sampling rather than being clipped afterward, which had been creating misleading horizontal and vertical artifacts.
