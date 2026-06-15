@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { WebMercatorViewport } from '@deck.gl/core';
-import { Search, Layers, Activity, Car, Leaf, MessageSquare, FileText, Download, X, Map, Box, Landmark, Star, TreePine } from 'lucide-react';
+import { Search, Layers, Activity, Car, MessageSquare, FileText, Download, X, Map, Box, Landmark } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import SandboxPanel from './SandboxLayer';
 import { captureViewport, buildRenderPrompt, requestAIRender } from './RenderCapture';
@@ -25,9 +25,6 @@ export default function App() {
     google3D: false,    // Heavy 3D tiles moved to optional toggle
     uraConservation: true,
     historicSites: false, // NHB Historic Sites
-    touristAttractions: false, // STB Tourist Attractions
-    parks: false, // NParks
-    vegetation: false,
     footTraffic: false,
     vehicleTraffic: false,
     sandbox: false       // Sandbox mode for 3D model placement
@@ -44,8 +41,6 @@ export default function App() {
 
   const [trafficData, setTrafficData] = useState({ vehicles: [], foot: [] });
   const [isTrafficLoading, setIsTrafficLoading] = useState(false);
-  const [touristAttractionsData, setTouristAttractionsData] = useState(null);
-  const [parksData, setParksData] = useState(null);
 
   // DYNAMIC TRAFFIC FETCHING: Re-fetch trip simulation based on viewport bounds
   useEffect(() => {
@@ -92,66 +87,6 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [viewState.longitude, viewState.latitude, viewState.zoom, activeLayers.footTraffic, activeLayers.vehicleTraffic]);
 
-  // NEW DYNAMIC OSM POLYGONS FETCHING
-  useEffect(() => {
-    if (!activeLayers.parks && !activeLayers.touristAttractions) return;
-
-    const timer = setTimeout(() => {
-      const viewport = new WebMercatorViewport({
-        width: window.innerWidth, height: window.innerHeight,
-        longitude: viewState.longitude, latitude: viewState.latitude, zoom: viewState.zoom,
-        pitch: viewState.pitch, bearing: viewState.bearing
-      });
-      const bounds = viewport.getBounds();
-      
-      const layersToFetch = [];
-      if (activeLayers.parks) layersToFetch.push('parks');
-      if (activeLayers.touristAttractions) layersToFetch.push('attractions');
-
-      fetch('/api/osm/polygons', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ south: bounds[1], west: bounds[0], north: bounds[3], east: bounds[2], layers: layersToFetch })
-      })
-        .then(res => res.json())
-        .then(data => {
-          // If API fails or returns error status, try to load fallback
-          if (!data || data.status === 'error' || !data.features || data.features.length === 0) {
-            // ONLY load fallback if we don't already have some data (don't overwrite good data with old fallback)
-            fetch('/data/osm_fallback.geojson')
-              .then(res => res.json())
-              .then(fallback => {
-                if (activeLayers.parks) setParksData(prev => prev || { ...fallback, features: fallback.features.filter(f => f.properties._type === 'park') });
-                if (activeLayers.touristAttractions) setTouristAttractionsData(prev => prev || { ...fallback, features: fallback.features.filter(f => f.properties._type === 'tourist-attraction') });
-              });
-            return;
-          }
-
-          if (activeLayers.parks) {
-             setParksData({
-               ...data, 
-               features: data.features.filter(f => f.properties._type === 'park')
-             });
-          }
-          if (activeLayers.touristAttractions) {
-             setTouristAttractionsData({
-               ...data,
-               features: data.features.filter(f => f.properties._type === 'tourist-attraction')
-             });
-          }
-        })
-        .catch(() => {
-          // Network error fallback — apply _type filter matching the success path
-          fetch('/data/osm_fallback.geojson').then(r => r.json()).then(fb => {
-             if (activeLayers.parks) setParksData(prev => prev || { ...fb, features: fb.features.filter(f => f.properties._type === 'park') });
-             if (activeLayers.touristAttractions) setTouristAttractionsData(prev => prev || { ...fb, features: fb.features.filter(f => f.properties._type === 'tourist-attraction') });
-          });
-        });
-    }, 500);
-
-    return () => clearTimeout(timer);
-  }, [viewState.longitude, viewState.latitude, viewState.zoom, activeLayers.parks, activeLayers.touristAttractions]);
-
   // --- SANDBOX STATE ---
   const [placedModels, setPlacedModels] = useState([]);
   const [selectedModelId, setSelectedModelId] = useState(null);
@@ -174,8 +109,6 @@ export default function App() {
   // --- GENERAL APP STATE ---
   const [uraData, setUraData] = useState(null);
   const [historicSitesData, setHistoricSitesData] = useState(null);
-  const [geeTileUrl, setGeeTileUrl] = useState(null);
-  const [loadingGee, setLoadingGee] = useState(false);
   const [selectedBuilding, setSelectedBuilding] = useState(null);
   const [activeTab, setActiveTab] = useState('dossier');
   const [chatHistory, setChatHistory] = useState([
@@ -201,10 +134,6 @@ export default function App() {
       const geojson = fb.data || fb; // unwrap if wrapped, use raw if already GeoJSON
       setUraData(prev => prev || geojson);
     });
-    fetch('/data/osm_fallback.geojson').then(r => r.json()).then(fb => {
-      setParksData(prev => prev || { ...fb, features: fb.features.filter(f => f.properties._type === 'park') });
-      setTouristAttractionsData(prev => prev || { ...fb, features: fb.features.filter(f => f.properties._type === 'tourist-attraction') });
-    });
     fetch('/data/historic_sites_fallback.geojson').then(r => r.json()).then(fb => {
       setHistoricSitesData(prev => prev || fb);
     });
@@ -218,28 +147,7 @@ export default function App() {
       .then(res => res.json())
       .then(data => { if (data.status === 'success') setHistoricSitesData(data.data); })
       .catch(() => {});
-    fetch('/api/datagov/tourist-attractions')
-      .then(res => res.json())
-      .then(data => { if (data.status === 'success') setTouristAttractionsData(data.data); })
-      .catch(() => {});
-    fetch('/api/datagov/parks')
-      .then(res => res.json())
-      .then(data => { if (data.status === 'success') setParksData(data.data); })
-      .catch(() => {});
   }, []);
-
-  // Fetch GEE Vegetation Layer
-  useEffect(() => {
-    if (activeLayers.vegetation && !geeTileUrl) {
-      setLoadingGee(true);
-      fetch('http://127.0.0.1:8000/api/gee-layer/vegetation')
-        .then(res => res.json())
-        .then(data => {
-          if (data.status === 'success') setGeeTileUrl(data.tile_fetch_url);
-        })
-        .finally(() => setLoadingGee(false));
-    }
-  }, [activeLayers.vegetation, geeTileUrl]);
 
   // Handle click-to-place: when sandbox is active and a model is pending, place it at click location
   const handleMapClick = useCallback((info) => {
@@ -334,9 +242,6 @@ export default function App() {
       const activeOverlays = [];
       if (activeLayers.uraConservation) activeOverlays.push('URA Conservation Areas');
       if (activeLayers.historicSites) activeOverlays.push('NHB Historic Sites');
-      if (activeLayers.touristAttractions) activeOverlays.push('Tourist Attractions');
-      if (activeLayers.parks) activeOverlays.push('Parks & Reserves');
-      if (activeLayers.vegetation) activeOverlays.push('NDVI Vegetation Index');
       if (activeLayers.footTraffic) activeOverlays.push('Foot Traffic Simulation');
       if (activeLayers.vehicleTraffic) activeOverlays.push('Vehicle Traffic Intensity');
       context += `Active Map Overlays: ${activeOverlays.join(', ') || 'None'}\n`;
@@ -379,9 +284,6 @@ export default function App() {
         activeLayers={activeLayers}
         uraData={uraData}
         historicSitesData={historicSitesData}
-        touristAttractionsData={touristAttractionsData}
-        parksData={parksData}
-        geeTileUrl={geeTileUrl}
         trafficData={trafficData}
         placedModels={placedModels}
         setPlacedModels={setPlacedModels}
@@ -437,12 +339,9 @@ export default function App() {
             <LayerCategory title="Heritage & Attractions" id="heritage" openCategories={openCategories} toggleCategory={toggleCategory}>
               <Toggle label="URA Conservation" icon={<FileText size={16} />} active={activeLayers.uraConservation} onClick={() => toggleLayer('uraConservation')} bgHint="bg-amber-100/60" />
               <Toggle label="NHB Historic Sites" icon={<Landmark size={16} />} active={activeLayers.historicSites} onClick={() => toggleLayer('historicSites')} bgHint="bg-amber-100/60" />
-              <Toggle label="Tourist Attractions" icon={<Star size={16} />} active={activeLayers.touristAttractions} onClick={() => toggleLayer('touristAttractions')} bgHint="bg-purple-100/60" />
             </LayerCategory>
 
             <LayerCategory title="Environment & Traffic" id="environment" openCategories={openCategories} toggleCategory={toggleCategory}>
-              <Toggle label="Parks & Reserves" icon={<TreePine size={16} />} active={activeLayers.parks} onClick={() => toggleLayer('parks')} bgHint="bg-green-100/60" />
-              <Toggle label="Site Vegetation (GEE)" icon={<Leaf size={16} />} active={activeLayers.vegetation} onClick={() => toggleLayer('vegetation')} loading={loadingGee} bgHint="bg-emerald-100/60" />
               <Toggle label="Foot Traffic Simulation" icon={<Activity size={16} />} active={activeLayers.footTraffic} loading={activeLayers.footTraffic && isTrafficLoading} onClick={() => toggleLayer('footTraffic')} bgHint="bg-blue-100/60" />
               <Toggle label="Vehicle Intensity" icon={<Car size={16} />} active={activeLayers.vehicleTraffic} loading={activeLayers.vehicleTraffic && isTrafficLoading} onClick={() => toggleLayer('vehicleTraffic')} bgHint="bg-orange-100/60" />
             </LayerCategory>
@@ -651,4 +550,3 @@ const Tab = ({ id, current, set, children }) => (
     {children}
   </button>
 );
-

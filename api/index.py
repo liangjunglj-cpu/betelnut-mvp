@@ -1,4 +1,3 @@
-import ee
 import asyncio
 import math
 import random
@@ -6,12 +5,11 @@ import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from google.oauth2 import service_account
 
 # 1. Initialize FastAPI App
 app = FastAPI(
     title="3D City Planner - Digital Twin API",
-    description="Backend proxy for Google Earth Engine analytical layers",
+    description="Backend proxy for Betelnut geospatial and AI services",
     version="1.0.0"
 )
 
@@ -32,8 +30,6 @@ except ImportError:
 
 # --- CONFIGURATION ---
 # Keys are safely loaded from the local .env file or Vercel Environment Variables
-SERVICE_ACCOUNT_FILE = 'service-account.json'
-URA_ACCESS_KEY = os.environ.get('URA_ACCESS_KEY', '') 
 OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', '')
 DATAGOV_API_KEY = os.environ.get('DATAGOV_API_KEY', '')
 
@@ -43,24 +39,6 @@ def get_datagov_headers():
     if DATAGOV_API_KEY:
         headers["api-key"] = DATAGOV_API_KEY
     return headers
-
-
-# 2. Google Earth Engine Authentication & Initialization
-@app.on_event("startup")
-def startup_event():
-    """Initialize Google Earth Engine on application startup."""
-    try:
-        # Load credentials from the service account JSON
-        credentials = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE)
-        # Apply the required Earth Engine scope
-        scoped_credentials = credentials.with_scopes(['https://www.googleapis.com/auth/earthengine'])
-        
-        # Initialize the Earth Engine Python API
-        ee.Initialize(scoped_credentials)
-        print("Successfully initialized Google Earth Engine.")
-    except Exception as e:
-        print(f"Error initializing Google Earth Engine: {e}")
-        # In a real app, you might want to stop startup if GEE fails to initialize
 
 
 # --- DATA.GOV.SG POLLING HELPER ---
@@ -99,20 +77,6 @@ async def poll_datagov_download(dataset_id, max_retries=5, delay=2.0):
             
     raise Exception(f"Data.gov.sg Export timed out for {dataset_id}")
 
-
-# --- URA API INTEGRATION ---
-def get_ura_token():
-    """Fetches the temporary token from URA Data Service."""
-    url = "https://eservice.ura.gov.sg/uraDataService/insertNewToken/v1"
-    headers = {"AccessKey": URA_ACCESS_KEY}
-    response = requests.get(url, headers=headers)
-    
-    if response.status_code == 200:
-        data = response.json()
-        if data.get("Status") == "Success":
-            return data.get("Result")
-    raise Exception("Failed to get URA Token")
-
 @app.get("/api/ura/conservation-data")
 async def get_conservation_data():
     """
@@ -142,129 +106,9 @@ async def get_historic_sites():
         print(f"Historic Sites Proxy Error: {e}")
         return {"status": "error", "message": str(e)}
 
-
-@app.get("/api/datagov/tourist-attractions")
-async def get_tourist_attractions():
-    """
-    Fetches Tourist Attractions GeoJSON from data.gov.sg.
-    """
-    try:
-        dataset_id = "d_0f2f47515425404e6c9d2a040dd87354"
-        data = await poll_datagov_download(dataset_id)
-        return {"status": "success", "data": data}
-    except Exception as e:
-        print(f"Tourist Attractions Proxy Error: {e}")
-        return {"status": "error", "message": str(e)}
-
-
-@app.get("/api/datagov/parks")
-async def get_parks():
-    """
-    Fetches Parks GeoJSON from data.gov.sg.
-    """
-    try:
-        dataset_id = "d_0542d48f0991541706b58059381a6eca"
-        data = await poll_datagov_download(dataset_id)
-        return {"status": "success", "data": data}
-    except Exception as e:
-        print(f"Parks Proxy Error: {e}")
-        return {"status": "error", "message": str(e)}
-
-
 # --- Dynamic Traffic Simulation ---
 # Caches Overpass results by rounded bounding box to avoid redundant requests
 _traffic_cache = {}
-
-_osm_polygon_cache = {}
-
-class OsmPolygonRequest(BaseModel):
-    south: float
-    west: float
-    north: float
-    east: float
-    layers: list[str]
-
-@app.post("/api/osm/polygons")
-async def get_osm_polygons(request: OsmPolygonRequest):
-    """
-    Fetches exact footprint Polygons for Parks and Tourist Attractions via Overpass API.
-    Replaces the single-point Datagov datasets with actual geometric boundaries.
-    """
-    bbox = f"{request.south},{request.west},{request.north},{request.east}"
-    cache_key = (round(request.south, 3), round(request.west, 3), round(request.north, 3), round(request.east, 3), tuple(sorted(request.layers)))
-
-    if cache_key in _osm_polygon_cache:
-        return _osm_polygon_cache[cache_key]
-
-    try:
-        # Build query based on requested layers
-        query_elements = []
-        if "parks" in request.layers:
-            query_elements.append(f'way["leisure"="park"]({bbox});')
-            query_elements.append(f'way["leisure"="nature_reserve"]({bbox});')
-            query_elements.append(f'way["boundary"="national_park"]({bbox});')
-        if "attractions" in request.layers:
-            query_elements.append(f'way["tourism"~"attraction|museum|theme_park"]({bbox});')
-            query_elements.append(f'way["historic"~"monument|memorial|ruins"]({bbox});')
-
-        if not query_elements:
-            return {"type": "FeatureCollection", "features": []}
-
-        query_body = "\n".join(query_elements)
-        query = f"""
-        [out:json][timeout:25];
-        (
-          {query_body}
-        );
-        out body;
-        >;
-        out skel qt;
-        """
-
-        res = requests.post("https://overpass-api.de/api/interpreter", data={"data": query}, timeout=35)
-        
-        if res.status_code == 504:
-             return {"status": "error", "code": "TIMEOUT", "message": "Overpass API Timeout"}
-        
-        res.raise_for_status()
-        osm_data = res.json()
-
-        nodes = {el["id"]: [el["lon"], el["lat"]] for el in osm_data.get("elements", []) if el["type"] == "node"}
-        
-        features = []
-        for el in osm_data.get("elements", []):
-            if el["type"] == "way" and "tags" in el:
-                coords = [nodes[ref] for ref in el.get("nodes", []) if ref in nodes]
-                if len(coords) > 2:
-                    # Close the polygon
-                    if coords[0] != coords[-1]:
-                        coords.append(coords[0])
-                    
-                    tags = el["tags"]
-                    poly_type = "park" if "leisure" in tags or "boundary" in tags else "tourist-attraction"
-                    
-                    features.append({
-                        "type": "Feature",
-                        "properties": {
-                            "NAME": tags.get("name", "Unnamed " + poly_type.title().replace("-", " ")),
-                            "_type": poly_type
-                        },
-                        "geometry": {
-                            "type": "Polygon",
-                            "coordinates": [coords]
-                        }
-                    })
-
-        geojson = {
-            "type": "FeatureCollection",
-            "features": features
-        }
-        _osm_polygon_cache[cache_key] = geojson
-        return geojson
-
-    except Exception as e:
-        print(f"OSM Polygon Error: {e}")
-        return {"type": "FeatureCollection", "features": []}
 
 
 class TrafficRequest(BaseModel):
@@ -280,12 +124,12 @@ def _haversine_deg(lon1, lat1, lon2, lat2):
 def _generate_trips(path_network, count, speed_multiplier, poi_points=None):
     """
     Generate simulated trip animations along road/path segments.
-    If poi_points are provided, paths near POIs get more trips (attraction weighting).
+    If poi_points are provided, paths near POIs get more trips.
     """
     if not path_network:
         return []
 
-    # Weight paths by proximity to POIs (tourist attractions, parks, monuments)
+    # Weight paths by proximity to POIs when any are supplied.
     weights = []
     for path in path_network:
         if not path or len(path) < 2:
@@ -352,8 +196,7 @@ async def simulate_traffic(request: TrafficRequest):
     """
     Generates dynamic traffic simulation for the given viewport bounds.
     1. Fetches road/footpath geometry from Overpass API (OSM)
-    2. Fetches POI locations (attractions, parks) from data.gov.sg cache
-    3. Generates attraction-weighted trip simulations
+    2. Synthesizes trip paths for deck.gl TripsLayer rendering
     """
     # Round bounds to 3 decimal places for cache key (~110m resolution)
     cache_key = (
@@ -454,48 +297,6 @@ async def get_weather_forecast_2h():
         return res.json()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Weather API Error: {str(e)}")
-
-
-# 3. GEE Layer Endpoint
-@app.get("/api/gee-layer/vegetation")
-async def get_vegetation_layer():
-    """
-    Generates a GEE tile URL for a recent MODIS NDVI (Vegetation) image.
-    Returns the XYZ tile format for the frontend to render.
-    """
-    try:
-        # Load the MODIS 16-day NDVI collection
-        dataset = ee.ImageCollection('MODIS/061/MOD13A2') \
-            .filterDate('2023-01-01', '2023-12-31') # Filtering to a recent year
-        
-        # Select the NDVI band and create a median composite for a clean image
-        ndvi = dataset.select('NDVI').median()
-
-        # Define Visualization Parameters
-        # MODIS NDVI values range from -2000 to 10000, but most vegetation is in the 0-9000 range.
-        vis_params = {
-            'min': 0.0,
-            'max': 9000.0,
-            'palette': ['red', 'yellow', 'green'] # Simple red to green palette
-        }
-
-        # Generate the Map ID and Tile Fetcher URL
-        # getMapId evaluates the image and visualization params to generate temporary XYZ tiles
-        map_id_dict = ee.Image(ndvi).getMapId(vis_params)
-        
-        # Extract the XYZ tile URL template provided by GEE
-        tile_fetch_url = map_id_dict['tile_fetcher'].url_format
-
-        return {
-            "status": "success",
-            "layer_name": "Vegetation (MODIS NDVI)",
-            "tile_fetch_url": tile_fetch_url
-        }
-
-    except Exception as e:
-        # Catch and return any GEE processing errors securely
-        raise HTTPException(status_code=500, detail=f"Failed to generate GEE layer: {str(e)}")
-
 
 # --- LLM Chat Endpoint ---
 class ChatRequest(BaseModel):

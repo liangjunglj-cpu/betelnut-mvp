@@ -21,10 +21,9 @@ const dirLight = new DirectionalLight({
 const lightingEffect = new LightingEffect({ ambientLight, dirLight });
 
 const MapCanvas = React.memo(({
-  viewState, setViewState, activeLayers, uraData, historicSitesData, 
-  touristAttractionsData, parksData, geeTileUrl, trafficData,
-  placedModels, setPlacedModels, selectedModelId, setSelectedBuilding, selectedBuilding,
-  isPlacing, handleMapClick, deckRef
+  viewState, setViewState, activeLayers, uraData, historicSitesData,
+  trafficData, placedModels, setPlacedModels, selectedModelId,
+  setSelectedBuilding, selectedBuilding, isPlacing, handleMapClick, deckRef
 }) => {
   const [time, setTime] = useState(0);
 
@@ -135,86 +134,6 @@ const MapCanvas = React.memo(({
     }
   }), [historicSitesData, activeLayers.historicSites]);
 
-  // NEW DYNAMIC OSM POLYGONS: Tourist Attractions
-  const touristAttractionsLayer = useMemo(() => new GeoJsonLayer({
-    id: 'tourist-attractions-layer',
-    data: touristAttractionsData,
-    visible: activeLayers.touristAttractions,
-    pickable: true,
-    autoHighlight: true,
-    stroked: true,
-    filled: true,
-    lineWidthMinPixels: 2,
-    material: false,
-    getFillColor: d => {
-      if (selectedBuilding && selectedBuilding.properties?.NAME === d.properties?.NAME) {
-         return [0, 0, 0, 150];
-      }
-      return [147, 51, 234, 100];
-    },
-    getLineColor: [88, 28, 135, 255],
-    updateTriggers: {
-      getFillColor: [selectedBuilding]
-    },
-    onClick: ({ object }) => {
-      if (object && object.properties) {
-        setSelectedBuilding({
-          ...object,
-          properties: { ...object.properties, ADDRESS: "Tourism/Attraction Site", _type: 'tourist-attraction' }
-        });
-      }
-    }
-  }), [touristAttractionsData, activeLayers.touristAttractions, selectedBuilding]);
-
-  // NEW DYNAMIC OSM POLYGONS: Parks
-  const parksLayer = useMemo(() => new GeoJsonLayer({
-    id: 'parks-layer',
-    data: parksData,
-    visible: activeLayers.parks,
-    pickable: true,
-    autoHighlight: true,
-    stroked: true,
-    filled: true,
-    lineWidthMinPixels: 2,
-    material: false,
-    getFillColor: d => {
-      if (selectedBuilding && selectedBuilding.properties?.NAME === d.properties?.NAME) {
-         return [0, 0, 0, 150];
-      }
-      return [34, 197, 94, 80];
-    },
-    getLineColor: [21, 128, 61, 255],
-    updateTriggers: {
-      getFillColor: [selectedBuilding]
-    },
-    onClick: ({ object }) => {
-      if (object && object.properties) {
-        setSelectedBuilding({
-          ...object,
-          properties: { ...object.properties, ADDRESS: "Park / Reserve", _type: 'park' }
-        });
-      }
-    }
-  }), [parksData, activeLayers.parks, selectedBuilding]);
-
-  const vegetationLayer = useMemo(() => new TileLayer({
-    id: 'gee-vegetation-layer',
-    data: geeTileUrl,
-    minZoom: 0,
-    maxZoom: 19,
-    tileSize: 256,
-    visible: activeLayers.vegetation && geeTileUrl !== null,
-    opacity: 0.6,
-    renderSubLayers: props => {
-      const { boundingBox } = props.tile;
-      return new BitmapLayer(props, {
-        data: null,
-        image: props.data,
-        bounds: [boundingBox[0][0], boundingBox[0][1], boundingBox[1][0], boundingBox[1][1]]
-      });
-    }
-  }), [geeTileUrl, activeLayers.vegetation]);
-
   const footTrafficLayer = new TripsLayer({
     id: 'foot-traffic-layer',
     data: trafficData.foot,
@@ -262,11 +181,8 @@ const MapCanvas = React.memo(({
       layers={[
         cartoBasemapLayer,
         google3DTilesLayer,
-        vegetationLayer,
         uraLayer,
         historicSitesLayer,
-        touristAttractionsLayer,
-        parksLayer,
         footTrafficLayer,
         vehicleTrafficLayer,
         ...sandboxLayers
