@@ -104,3 +104,19 @@
 - Reworked `api/index.py` to prefer actual OSM-derived geometry only: it now retries across multiple Overpass endpoints, splits fetched ways into straighter traversable segments, filters them against dominant local axes, and samples only from those real segments.
 - Removed invented synthetic traffic from the failure path. When no trustworthy path network is available, `/api/traffic/simulate` now returns empty traffic instead of misleading lines.
 - Verified the backend compile still passes, verified the path-normalization helpers keep only coherent axis-aligned segments in a direct Python check, and verified the frontend build still passes outside the sandbox.
+
+# GeoJSON Overlay
+
+- [x] Inspect the current upload and layer architecture for where a GeoJSON overlay feature should live
+- [x] Add a drag-and-drop GeoJSON upload flow standardized to Singapore EPSG:3414
+- [x] Render the uploaded overlay on the map and expose feature properties in the UI
+- [x] Verify the updated frontend build and summarize any CRS constraints for users
+
+## GeoJSON Overlay Review
+
+- Added a client-side EPSG:3414 normalization utility in `src/geojsonUtils.js` using `proj4`, with Singapore bounds validation after transforming uploaded coordinates into WGS84 for deck.gl rendering.
+- Added a dedicated upload/info panel in `src/GeoJsonOverlayPanel.jsx` so users can drop a `.geojson` file, see file metadata, toggle the overlay, clear it, and inspect clicked feature properties.
+- Updated `src/App.jsx` to store uploaded GeoJSON state, auto-enable the overlay, fit the map view to the transformed bounds, and include the uploaded overlay in the LLM context list when active.
+- Updated `src/MapCanvas.jsx` to render the uploaded data as a `GeoJsonLayer` with highlighting and clickable properties.
+- Verified a sample EPSG:3414 polygon transforms into a plausible Singapore WGS84 footprint and produces the expected metadata summary.
+- Verified `npm run build` passed when rerun outside the sandbox after the known Windows `spawn EPERM` restriction blocked the sandboxed build.

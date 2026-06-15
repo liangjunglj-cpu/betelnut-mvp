@@ -2,11 +2,13 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { WebMercatorViewport } from '@deck.gl/core';
 import { Search, Layers, Activity, Car, MessageSquare, FileText, Download, X, Map, Box, Landmark } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import GeoJsonOverlayPanel from './GeoJsonOverlayPanel';
 import SandboxPanel from './SandboxLayer';
 import { captureViewport, buildRenderPrompt, requestAIRender } from './RenderCapture';
 import Gumball from './Gumball';
 import MapCanvas from './MapCanvas';
 import LandingPage from './LandingPage';
+import { normalizeSingaporeGeoJson } from './geojsonUtils';
 
 // Initial view state over Singapore (Orchard Road area)
 const INITIAL_VIEW_STATE = {
@@ -25,6 +27,7 @@ export default function App() {
     google3D: false,    // Heavy 3D tiles moved to optional toggle
     uraConservation: true,
     historicSites: false, // NHB Historic Sites
+    geojsonOverlay: false,
     footTraffic: false,
     vehicleTraffic: false,
     sandbox: false       // Sandbox mode for 3D model placement
@@ -137,6 +140,10 @@ export default function App() {
   // --- GENERAL APP STATE ---
   const [uraData, setUraData] = useState(null);
   const [historicSitesData, setHistoricSitesData] = useState(null);
+  const [uploadedGeoJsonData, setUploadedGeoJsonData] = useState(null);
+  const [uploadedGeoJsonMeta, setUploadedGeoJsonMeta] = useState(null);
+  const [selectedGeoJsonFeature, setSelectedGeoJsonFeature] = useState(null);
+  const [geoJsonUploadError, setGeoJsonUploadError] = useState('');
   const [selectedBuilding, setSelectedBuilding] = useState(null);
   const [activeTab, setActiveTab] = useState('dossier');
   const [chatHistory, setChatHistory] = useState([
@@ -243,6 +250,63 @@ export default function App() {
     });
   };
 
+  const fitViewToBounds = useCallback((bounds) => {
+    const viewport = new WebMercatorViewport({
+      width: window.innerWidth,
+      height: window.innerHeight,
+      longitude: viewState.longitude,
+      latitude: viewState.latitude,
+      zoom: viewState.zoom,
+      pitch: 0,
+      bearing: 0,
+    });
+
+    const fitted = viewport.fitBounds(bounds, {
+      padding: { top: 80, bottom: 80, left: 360, right: 420 },
+    });
+
+    setViewState((prev) => ({
+      ...prev,
+      longitude: fitted.longitude,
+      latitude: fitted.latitude,
+      zoom: Math.min(fitted.zoom, 18),
+      bearing: 0,
+      pitch: Math.min(prev.pitch, 45),
+      transitionDuration: 700,
+    }));
+  }, [viewState.longitude, viewState.latitude, viewState.zoom]);
+
+  const handleGeoJsonUpload = useCallback(async (file) => {
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.geojson') && !file.name.toLowerCase().endsWith('.json')) {
+      setGeoJsonUploadError('Please upload a .geojson file exported in Singapore EPSG:3414 coordinates.');
+      return;
+    }
+
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const { data, meta } = normalizeSingaporeGeoJson(parsed, file.name);
+      setUploadedGeoJsonData(data);
+      setUploadedGeoJsonMeta(meta);
+      setSelectedGeoJsonFeature(null);
+      setSelectedBuilding(null);
+      setGeoJsonUploadError('');
+      setActiveLayers((prev) => ({ ...prev, geojsonOverlay: true }));
+      fitViewToBounds(meta.bounds);
+    } catch (error) {
+      setGeoJsonUploadError(error.message || 'Could not read the uploaded GeoJSON file.');
+    }
+  }, [fitViewToBounds]);
+
+  const clearGeoJsonOverlay = useCallback(() => {
+    setUploadedGeoJsonData(null);
+    setUploadedGeoJsonMeta(null);
+    setSelectedGeoJsonFeature(null);
+    setGeoJsonUploadError('');
+    setActiveLayers((prev) => ({ ...prev, geojsonOverlay: false }));
+  }, []);
+
   // Chat Submission Handler
   const handleChat = async (presetMessage = null) => {
     const userMessage = presetMessage || chatInput;
@@ -270,6 +334,7 @@ export default function App() {
       const activeOverlays = [];
       if (activeLayers.uraConservation) activeOverlays.push('URA Conservation Areas');
       if (activeLayers.historicSites) activeOverlays.push('NHB Historic Sites');
+      if (activeLayers.geojsonOverlay && uploadedGeoJsonMeta) activeOverlays.push(`Uploaded GeoJSON (${uploadedGeoJsonMeta.fileName})`);
       if (activeLayers.footTraffic) activeOverlays.push('Foot Traffic Simulation');
       if (activeLayers.vehicleTraffic) activeOverlays.push('Vehicle Traffic Intensity');
       context += `Active Map Overlays: ${activeOverlays.join(', ') || 'None'}\n`;
@@ -313,10 +378,12 @@ export default function App() {
         uraData={uraData}
         historicSitesData={historicSitesData}
         trafficData={trafficData}
+        uploadedGeoJsonData={uploadedGeoJsonData}
         placedModels={placedModels}
         setPlacedModels={setPlacedModels}
         selectedModelId={selectedModelId}
         setSelectedBuilding={setSelectedBuilding}
+        setSelectedGeoJsonFeature={setSelectedGeoJsonFeature}
         selectedBuilding={selectedBuilding}
         isPlacing={isPlacing}
         handleMapClick={handleMapClick}
@@ -367,6 +434,9 @@ export default function App() {
             <LayerCategory title="Heritage & Attractions" id="heritage" openCategories={openCategories} toggleCategory={toggleCategory}>
               <Toggle label="URA Conservation" icon={<FileText size={16} />} active={activeLayers.uraConservation} onClick={() => toggleLayer('uraConservation')} bgHint="bg-amber-100/60" />
               <Toggle label="NHB Historic Sites" icon={<Landmark size={16} />} active={activeLayers.historicSites} onClick={() => toggleLayer('historicSites')} bgHint="bg-amber-100/60" />
+              {uploadedGeoJsonMeta && (
+                <Toggle label="Uploaded GeoJSON" icon={<Layers size={16} />} active={activeLayers.geojsonOverlay} onClick={() => toggleLayer('geojsonOverlay')} bgHint="bg-teal-100/60" />
+              )}
             </LayerCategory>
 
             <LayerCategory title="Environment & Traffic" id="environment" openCategories={openCategories} toggleCategory={toggleCategory}>
@@ -378,6 +448,16 @@ export default function App() {
               <Toggle label="Sandbox Mode" icon={<Box size={16} />} active={activeLayers.sandbox} onClick={() => toggleLayer('sandbox')} />
             </LayerCategory>
           </div>
+
+          <GeoJsonOverlayPanel
+            overlayMeta={uploadedGeoJsonMeta}
+            selectedFeature={selectedGeoJsonFeature}
+            error={geoJsonUploadError}
+            active={activeLayers.geojsonOverlay}
+            onToggle={() => toggleLayer('geojsonOverlay')}
+            onUpload={handleGeoJsonUpload}
+            onClear={clearGeoJsonOverlay}
+          />
 
           <div className="mt-4 pt-4 border-t border-gray-200 shrink-0">
             <button

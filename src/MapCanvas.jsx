@@ -22,8 +22,8 @@ const lightingEffect = new LightingEffect({ ambientLight, dirLight });
 
 const MapCanvas = React.memo(({
   viewState, setViewState, activeLayers, uraData, historicSitesData,
-  trafficData, placedModels, setPlacedModels, selectedModelId,
-  setSelectedBuilding, selectedBuilding, isPlacing, handleMapClick, deckRef
+  trafficData, uploadedGeoJsonData, placedModels, setPlacedModels, selectedModelId,
+  setSelectedBuilding, setSelectedGeoJsonFeature, selectedBuilding, isPlacing, handleMapClick, deckRef
 }) => {
   const [time, setTime] = useState(0);
 
@@ -99,9 +99,12 @@ const MapCanvas = React.memo(({
       getFillColor: [selectedBuilding]
     },
     onClick: ({ object }) => {
-      if (object) setSelectedBuilding(object);
+      if (object) {
+        setSelectedGeoJsonFeature(null);
+        setSelectedBuilding(object);
+      }
     }
-  }), [uraData, activeLayers.uraConservation, selectedBuilding]);
+  }), [uraData, activeLayers.uraConservation, selectedBuilding, setSelectedBuilding, setSelectedGeoJsonFeature]);
 
   const historicSitesLayer = useMemo(() => new GeoJsonLayer({
     id: 'historic-sites-layer',
@@ -124,6 +127,7 @@ const MapCanvas = React.memo(({
     getTextPixelOffset: [0, 0],
     onClick: ({ object }) => {
       if (object && object.properties) {
+        setSelectedGeoJsonFeature(null);
         const name = object.properties.NAME || object.properties.Name || object.properties.name || 'Historic Site';
         const desc = object.properties.DESCRIPTION || object.properties.Description || object.properties.description || '';
         setSelectedBuilding({
@@ -132,7 +136,32 @@ const MapCanvas = React.memo(({
         });
       }
     }
-  }), [historicSitesData, activeLayers.historicSites]);
+  }), [historicSitesData, activeLayers.historicSites, setSelectedBuilding, setSelectedGeoJsonFeature]);
+
+  const uploadedGeoJsonLayer = useMemo(() => uploadedGeoJsonData ? new GeoJsonLayer({
+    id: 'uploaded-geojson-layer',
+    data: uploadedGeoJsonData,
+    visible: activeLayers.geojsonOverlay,
+    pickable: true,
+    autoHighlight: true,
+    stroked: true,
+    filled: true,
+    lineWidthMinPixels: 2,
+    pointRadiusMinPixels: 6,
+    pointRadiusMaxPixels: 10,
+    material: false,
+    getFillColor: [20, 184, 166, 72],
+    getLineColor: [13, 148, 136, 220],
+    getPointRadius: 8,
+    onClick: ({ object }) => {
+      if (!object) return;
+      setSelectedBuilding(null);
+      setSelectedGeoJsonFeature({
+        geometryType: object.geometry?.type || 'Feature',
+        properties: object.properties || {},
+      });
+    }
+  }) : null, [uploadedGeoJsonData, activeLayers.geojsonOverlay, setSelectedBuilding, setSelectedGeoJsonFeature]);
 
   const footTrafficLayer = new TripsLayer({
     id: 'foot-traffic-layer',
@@ -183,6 +212,7 @@ const MapCanvas = React.memo(({
         google3DTilesLayer,
         uraLayer,
         historicSitesLayer,
+        uploadedGeoJsonLayer,
         footTrafficLayer,
         vehicleTrafficLayer,
         ...sandboxLayers
