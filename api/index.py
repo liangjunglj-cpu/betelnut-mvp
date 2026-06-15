@@ -117,6 +117,115 @@ class TrafficRequest(BaseModel):
     north: float
     east: float
 
+
+def _clamp(value, minimum, maximum):
+    return max(minimum, min(value, maximum))
+
+
+def _build_interpolated_path(start, end, segments, jitter_lon=0.0, jitter_lat=0.0, bounds=None):
+    path = []
+    west = south = east = north = None
+    if bounds:
+        west, south, east, north = bounds
+
+    for i in range(segments + 1):
+        t = i / segments
+        lon = start[0] + (end[0] - start[0]) * t
+        lat = start[1] + (end[1] - start[1]) * t
+
+        if 0 < i < segments:
+            lon += random.uniform(-jitter_lon, jitter_lon)
+            lat += random.uniform(-jitter_lat, jitter_lat)
+
+        if bounds:
+            lon = _clamp(lon, west, east)
+            lat = _clamp(lat, south, north)
+
+        path.append([lon, lat])
+
+    return path
+
+
+def _build_synthetic_network(south, west, north, east):
+    lon_span = max(east - west, 0.002)
+    lat_span = max(north - south, 0.002)
+    center_lon = (west + east) / 2
+    center_lat = (south + north) / 2
+    bounds = (west, south, east, north)
+    margin_lon = lon_span * 0.08
+    margin_lat = lat_span * 0.08
+    jitter_lon = lon_span * 0.025
+    jitter_lat = lat_span * 0.025
+
+    def point(x_ratio, y_ratio):
+        return [
+            west + margin_lon + (lon_span - margin_lon * 2) * x_ratio,
+            south + margin_lat + (lat_span - margin_lat * 2) * y_ratio,
+        ]
+
+    vehicle_paths = []
+    for row_ratio in (0.22, 0.5, 0.78):
+        vehicle_paths.append(
+            _build_interpolated_path(point(0.0, row_ratio), point(1.0, row_ratio), 5, jitter_lon, jitter_lat, bounds)
+        )
+    for col_ratio in (0.26, 0.5, 0.74):
+        vehicle_paths.append(
+            _build_interpolated_path(point(col_ratio, 0.0), point(col_ratio, 1.0), 5, jitter_lon, jitter_lat, bounds)
+        )
+    vehicle_paths.append(
+        _build_interpolated_path(point(0.08, 0.18), point(0.92, 0.82), 6, jitter_lon * 0.7, jitter_lat * 0.7, bounds)
+    )
+    vehicle_paths.append(
+        _build_interpolated_path(point(0.1, 0.82), point(0.9, 0.18), 6, jitter_lon * 0.7, jitter_lat * 0.7, bounds)
+    )
+
+    foot_paths = []
+    for row_ratio in (0.14, 0.32, 0.5, 0.68, 0.86):
+        foot_paths.append(
+            _build_interpolated_path(point(0.04, row_ratio), point(0.96, row_ratio), 7, jitter_lon * 1.2, jitter_lat * 1.2, bounds)
+        )
+    for col_ratio in (0.15, 0.35, 0.5, 0.65, 0.85):
+        foot_paths.append(
+            _build_interpolated_path(point(col_ratio, 0.04), point(col_ratio, 0.96), 7, jitter_lon * 1.2, jitter_lat * 1.2, bounds)
+        )
+    foot_paths.append(
+        _build_interpolated_path(point(0.12, 0.18), point(0.88, 0.82), 8, jitter_lon, jitter_lat, bounds)
+    )
+    foot_paths.append(
+        _build_interpolated_path(point(0.12, 0.82), point(0.88, 0.18), 8, jitter_lon, jitter_lat, bounds)
+    )
+    foot_paths.append([
+        [center_lon - lon_span * 0.16, center_lat - lat_span * 0.12],
+        [center_lon - lon_span * 0.05, center_lat - lat_span * 0.02],
+        [center_lon + lon_span * 0.08, center_lat + lat_span * 0.04],
+        [center_lon + lon_span * 0.18, center_lat + lat_span * 0.16],
+    ])
+    foot_paths.append([
+        [center_lon - lon_span * 0.2, center_lat + lat_span * 0.14],
+        [center_lon - lon_span * 0.07, center_lat + lat_span * 0.05],
+        [center_lon + lon_span * 0.05, center_lat - lat_span * 0.03],
+        [center_lon + lon_span * 0.16, center_lat - lat_span * 0.14],
+    ])
+
+    return vehicle_paths, foot_paths
+
+
+def _build_fallback_traffic_result(request: TrafficRequest, reason: str):
+    vehicle_paths, foot_paths = _build_synthetic_network(request.south, request.west, request.north, request.east)
+    bbox = f"{request.south},{request.west},{request.north},{request.east}"
+
+    return {
+        "vehicles": _generate_trips(vehicle_paths, 60, 2.0),
+        "foot": _generate_trips(foot_paths, 110, 0.5),
+        "_meta": {
+            "vehicle_roads": len(vehicle_paths),
+            "foot_paths": len(foot_paths),
+            "bbox": bbox,
+            "source": "synthetic-fallback",
+            "reason": reason,
+        }
+    }
+
 def _haversine_deg(lon1, lat1, lon2, lat2):
     """Returns approximate distance in degrees (rough, for weighting only)."""
     return math.sqrt((lon2 - lon1)**2 + (lat2 - lat1)**2)
@@ -251,6 +360,20 @@ async def simulate_traffic(request: TrafficRequest):
             elif highway in ("footway", "pedestrian", "path", "cycleway"):
                 foot_paths.append(coords)
 
+        if not vehicle_paths and not foot_paths:
+            result = _build_fallback_traffic_result(request, "no-osm-paths")
+            _traffic_cache[cache_key] = result
+            return result
+
+        if len(vehicle_paths) < 4 or len(foot_paths) < 6:
+            synthetic_vehicle_paths, synthetic_foot_paths = _build_synthetic_network(
+                request.south, request.west, request.north, request.east
+            )
+            if len(vehicle_paths) < 4:
+                vehicle_paths.extend(synthetic_vehicle_paths[:4 - len(vehicle_paths)])
+            if len(foot_paths) < 6:
+                foot_paths.extend(synthetic_foot_paths[:6 - len(foot_paths)])
+
         # Collect POI points for weighting (simple: use viewport center area)
         # In production this would query cached POI data; for now we pass empty
         # and the weighting gracefully falls back to uniform distribution
@@ -270,6 +393,7 @@ async def simulate_traffic(request: TrafficRequest):
                 "vehicle_roads": len(vehicle_paths),
                 "foot_paths": len(foot_paths),
                 "bbox": bbox,
+                "source": "osm",
             }
         }
 
@@ -278,11 +402,11 @@ async def simulate_traffic(request: TrafficRequest):
 
         return result
 
-    except requests.exceptions.Timeout:
-        raise HTTPException(status_code=504, detail="Overpass API timed out. Try a smaller viewport.")
     except Exception as e:
         print(f"Traffic Simulation Error: {e}")
-        raise HTTPException(status_code=500, detail=f"Traffic Simulation Error: {str(e)}")
+        fallback = _build_fallback_traffic_result(request, type(e).__name__)
+        _traffic_cache[cache_key] = fallback
+        return fallback
 
 
 @app.get("/api/weather/forecast-2h")

@@ -49,3 +49,44 @@
 - Reproduced the Google 3D issue on the live deployment: the toggle state changes, but no 3D tiles appear and no browser console errors are emitted in the sampled logs.
 - Confirmed the deployed frontend bundle contains a real Google API key and the Google 3D tiles URL, so the issue is not a missing `VITE_GOOGLE_MAPS_API_KEY` on Vercel.
 - Remaining likely causes for Google 3D are external to Vercel bundling: Google API key restrictions, missing Google Maps Map Tiles / Photorealistic 3D Tiles enablement or billing, or client-side blocking of `tile.googleapis.com` requests in the inspected browser surface.
+
+# Google 3D Investigation
+
+- [x] Confirm the current production deployment still ships the Google 3D layer
+- [x] Probe the live Google tiles endpoint with the configured API key
+- [x] Compare the response with invalid-key and malformed-request behavior
+- [x] Check current Google Maps Tile API docs for the expected endpoint and setup
+- [x] Record the most likely root cause
+
+## Google 3D Review
+
+- The production app still points `Tile3DLayer` at the documented Google root tileset URL: `https://tile.googleapis.com/v1/3dtiles/root.json?key=...`.
+- A direct request to that exact URL with the current configured key returned `404 NOT_FOUND` from Google, not a Vercel error and not a missing-env-var failure.
+- An intentionally invalid API key returned `400 INVALID_ARGUMENT`, which shows Google is recognizing the request shape and distinguishing the current key from a bogus one.
+- A documented Map Tiles API `createSession` request with the same current key also returned `404 NOT_FOUND`, which strongly suggests the Google Cloud project/key is not correctly provisioned for the Map Tiles API rather than this being a deck.gl-only rendering bug.
+- Google’s current Map Tiles API docs still document the Betelnut URL pattern as correct and state that setup requires billing plus enabling the Map Tiles API; their current 3D error docs also note that fully provisioned 3D access issues more typically surface as `403` and may require allowlisting for 3D Tiles.
+- Working conclusion: the Betelnut Google 3D failure is upstream of Vercel and upstream of the frontend renderer. The most likely issue is that the API key belongs to a Google Cloud project that either does not have Map Tiles API properly enabled/billed, is restricted away from tile.googleapis.com usage, or has not been provisioned/allowlisted for the needed 3D functionality.
+
+## Google 3D Recheck
+
+- Rechecked on June 15, 2026 after the user re-enabled the Google-side API access.
+- The same production-domain request to `https://tile.googleapis.com/v1/3dtiles/root.json?key=...` now returns `200 OK` with a valid 3D tileset JSON payload.
+- A documented `POST https://tile.googleapis.com/v1/createSession?key=...` request with the same key now also returns `200 OK` with a valid session token payload.
+- The current production deployment on Vercel is unchanged (`dpl_AHD3cz1UuT8jnvzxfkwbQeshjt8E`), so the successful response change came from Google-side provisioning rather than a new Betelnut deploy.
+- Working conclusion after recheck: the original blocker has been removed upstream, and the existing production build should now be able to load Google 3D tiles without any code changes or redeploy, aside from any client-side caching that may require a hard refresh.
+
+# Traffic Viewport Follow
+
+- [x] Inspect the current traffic fetch/fallback flow and confirm why it stays pinned to Orchard
+- [x] Replace Orchard-only fallback behavior with viewport-aware traffic generation
+- [x] Prevent stale traffic responses from overwriting the latest pan position
+- [x] Verify the updated traffic logic still builds cleanly
+
+## Traffic Review
+
+- Confirmed the Orchard lock-in came from the frontend fallback path in `src/App.jsx`, which loaded `public/traffic_data.json` whenever the live traffic request failed or returned an unexpected shape.
+- Updated `api/index.py` so `/api/traffic/simulate` now returns viewport-local synthetic trips whenever OSM data is missing, sparse, or Overpass errors out, instead of bubbling the failure back to the Orchard sample.
+- Updated `src/App.jsx` so the client no longer fetches the Orchard sample file, includes abort handling, and ignores stale traffic responses when the user pans quickly.
+- Verified `python -m py_compile api/index.py` passed.
+- Verified `npm run build` passed when rerun outside the sandbox after the known Windows `spawn EPERM` restriction blocked the sandboxed build.
+- Verified the new fallback generator responds to different bboxes with different coordinates by comparing Orchard-area and Marina Bay sample bounds through a direct Python check.

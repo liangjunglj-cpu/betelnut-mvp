@@ -41,11 +41,13 @@ export default function App() {
 
   const [trafficData, setTrafficData] = useState({ vehicles: [], foot: [] });
   const [isTrafficLoading, setIsTrafficLoading] = useState(false);
+  const trafficRequestIdRef = useRef(0);
 
   // DYNAMIC TRAFFIC FETCHING: Re-fetch trip simulation based on viewport bounds
   useEffect(() => {
     if (!activeLayers.footTraffic && !activeLayers.vehicleTraffic) return;
 
+    let controller;
     const timer = setTimeout(() => {
       // Calculate view bounds
       const viewport = new WebMercatorViewport({
@@ -58,34 +60,54 @@ export default function App() {
         bearing: viewState.bearing
       });
       const bounds = viewport.getBounds(); // [minLng, minLat, maxLng, maxLat]
+      const requestId = ++trafficRequestIdRef.current;
+      controller = new AbortController();
 
       setIsTrafficLoading(true);
       fetch('/api/traffic/simulate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ south: bounds[1], west: bounds[0], north: bounds[3], east: bounds[2] })
+        body: JSON.stringify({ south: bounds[1], west: bounds[0], north: bounds[3], east: bounds[2] }),
+        signal: controller.signal
       })
-        .then(res => res.json())
+        .then(res => {
+          if (!res.ok) throw new Error(`Traffic request failed with status ${res.status}`);
+          return res.json();
+        })
         .then(data => {
-          if (data && (data.vehicles || data.foot)) {
+          if (requestId !== trafficRequestIdRef.current) return;
+          const hasTrips = Array.isArray(data?.vehicles) && Array.isArray(data?.foot);
+          if (hasTrips) {
             setTrafficData(data);
           } else {
-            // Fallback to static sample data for Orchard area if dynamic fails
-            fetch('/traffic_data.json')
-              .then(res => res.json())
-              .then(fallback => setTrafficData(fallback));
+            setTrafficData({ vehicles: [], foot: [] });
           }
         })
-        .catch(() => {
-          fetch('/traffic_data.json')
-            .then(res => res.json())
-            .then(fallback => setTrafficData(fallback));
+        .catch(error => {
+          if (error.name === 'AbortError') return;
+          if (requestId !== trafficRequestIdRef.current) return;
+          setTrafficData({ vehicles: [], foot: [] });
         })
-        .finally(() => setIsTrafficLoading(false));
+        .finally(() => {
+          if (requestId === trafficRequestIdRef.current) {
+            setIsTrafficLoading(false);
+          }
+        });
     }, 500); // 500ms debounce
 
-    return () => clearTimeout(timer);
-  }, [viewState.longitude, viewState.latitude, viewState.zoom, activeLayers.footTraffic, activeLayers.vehicleTraffic]);
+    return () => {
+      clearTimeout(timer);
+      controller?.abort();
+    };
+  }, [
+    viewState.longitude,
+    viewState.latitude,
+    viewState.zoom,
+    viewState.pitch,
+    viewState.bearing,
+    activeLayers.footTraffic,
+    activeLayers.vehicleTraffic
+  ]);
 
   // --- SANDBOX STATE ---
   const [placedModels, setPlacedModels] = useState([]);
