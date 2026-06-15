@@ -93,6 +93,11 @@ export default function GeoJsonOverlayPanel({
               <p className="text-xs font-semibold text-black">{overlayMeta.fileName}</p>
               <p className="text-[11px] text-gray-500">{overlayMeta.featureCount} features · {overlayMeta.geometryTypes.join(', ')}</p>
               <p className="text-[11px] text-gray-400">{overlayMeta.crs}</p>
+              {(overlayMeta.discardedCoordinateCount > 0 || overlayMeta.discardedFeatureCount > 0) && (
+                <p className="text-[11px] text-amber-700 mt-1">
+                  Skipped {overlayMeta.discardedCoordinateCount} coordinates and {overlayMeta.discardedFeatureCount} empty features outside Singapore.
+                </p>
+              )}
             </div>
             <button
               onClick={onClear}
@@ -128,4 +133,3 @@ export default function GeoJsonOverlayPanel({
     </div>
   );
 }
-

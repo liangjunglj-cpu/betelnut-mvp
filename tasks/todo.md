@@ -120,3 +120,10 @@
 - Updated `src/MapCanvas.jsx` to render the uploaded data as a `GeoJsonLayer` with highlighting and clickable properties.
 - Verified a sample EPSG:3414 polygon transforms into a plausible Singapore WGS84 footprint and produces the expected metadata summary.
 - Verified `npm run build` passed when rerun outside the sandbox after the known Windows `spawn EPERM` restriction blocked the sandboxed build.
+
+## GeoJSON Boundary Relaxation
+
+- Updated `src/geojsonUtils.js` so coordinates outside Singapore are pruned instead of rejecting the whole upload, with empty features removed only if nothing valid remains after transformation.
+- Updated `src/GeoJsonOverlayPanel.jsx` to show how many coordinates and features were skipped during import.
+- Verified a mixed-boundary sample keeps the Singapore-valid polygon geometry, drops the outside-only point feature, and reports the discarded counts in metadata.
+- Verified `npm run build` still passes outside the sandbox with the relaxed import behavior.
