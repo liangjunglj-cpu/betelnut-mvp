@@ -4,3 +4,4 @@
 - When production behavior depends on an external geodata service, check runtime logs to see whether the app is serving fallback data before tuning the frontend rendering.
 - For geospatial simulations, prefer an empty state over invented fallback geometry when the upstream path network is unavailable; wrong movement erodes trust faster than missing movement.
 - For Singapore-only GeoJSON import, prune out-of-bounds coordinates when possible instead of rejecting the whole file; partial usable geometry is better than a hard stop for mixed-boundary datasets.
+- Do not assume uploaded GeoJSON is projected just because the workflow prefers EPSG:3414; many GeoJSON exports are already WGS84, so the importer should detect or honor CRS before transforming.

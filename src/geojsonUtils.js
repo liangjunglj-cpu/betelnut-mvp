@@ -32,13 +32,13 @@ function normalizeToFeatureCollection(input) {
   throw new Error('Unsupported GeoJSON payload. Please upload a valid GeoJSON FeatureCollection, Feature, or Geometry.');
 }
 
-function validateCRS(crs) {
-  if (!crs) return;
+function parseExplicitCRS(crs) {
+  if (!crs) return null;
   const crsName = String(crs?.properties?.name || crs?.name || '').toUpperCase();
-  if (!crsName) return;
-  if (!crsName.includes('3414')) {
-    throw new Error('This overlay only accepts Singapore EPSG:3414 GeoJSON.');
-  }
+  if (!crsName) return null;
+  if (crsName.includes('3414') || crsName.includes('SVY21')) return EPSG_3414;
+  if (crsName.includes('4326') || crsName.includes('CRS84') || crsName.includes('WGS84')) return WGS84;
+  throw new Error('This overlay only accepts Singapore GeoJSON in EPSG:3414 or WGS84 (EPSG:4326).');
 }
 
 function isWithinSingapore(lng, lat) {
@@ -58,14 +58,82 @@ function trackCoordinate(lng, lat, stats) {
   stats.maxLat = Math.max(stats.maxLat, lat);
 }
 
-function transformCoordinate(coord, stats) {
+function isPlausibleLngLat(coord) {
+  return (
+    Array.isArray(coord) &&
+    coord.length >= 2 &&
+    Number.isFinite(coord[0]) &&
+    Number.isFinite(coord[1]) &&
+    coord[0] >= -180 &&
+    coord[0] <= 180 &&
+    coord[1] >= -90 &&
+    coord[1] <= 90
+  );
+}
+
+function collectCoordinateSamples(value, samples = [], limit = 128) {
+  if (!value || samples.length >= limit) return samples;
+  if (Array.isArray(value)) {
+    if (
+      value.length >= 2 &&
+      typeof value[0] === 'number' &&
+      typeof value[1] === 'number'
+    ) {
+      samples.push(value);
+      return samples;
+    }
+
+    value.forEach((entry) => {
+      if (samples.length < limit) collectCoordinateSamples(entry, samples, limit);
+    });
+  }
+  else if (typeof value === 'object') {
+    Object.values(value).forEach((entry) => {
+      if (samples.length < limit) collectCoordinateSamples(entry, samples, limit);
+    });
+  }
+
+  return samples;
+}
+
+function detectSourceCRS(featureCollection, explicitCRS) {
+  if (explicitCRS) return explicitCRS;
+
+  const samples = collectCoordinateSamples(featureCollection);
+  let wgs84InBounds = 0;
+  let wgs84Plausible = 0;
+  let svy21InBounds = 0;
+
+  samples.forEach((coord) => {
+    const [x, y] = coord;
+    if (isWithinSingapore(x, y)) wgs84InBounds += 1;
+    if (isPlausibleLngLat(coord)) wgs84Plausible += 1;
+
+    const [lng, lat] = proj4(EPSG_3414, WGS84, [x, y]);
+    if (Number.isFinite(lng) && Number.isFinite(lat) && isWithinSingapore(lng, lat)) {
+      svy21InBounds += 1;
+    }
+  });
+
+  if (wgs84InBounds > svy21InBounds) return WGS84;
+  if (svy21InBounds > wgs84InBounds) return EPSG_3414;
+  if (wgs84InBounds > 0) return WGS84;
+  if (svy21InBounds > 0) return EPSG_3414;
+  if (wgs84Plausible > 0) return WGS84;
+  return EPSG_3414;
+}
+
+function normalizeCoordinate(coord, sourceCrs, stats) {
   if (!Array.isArray(coord) || coord.length < 2) {
     throw new Error('Encountered an invalid coordinate while reading the GeoJSON file.');
   }
 
-  const [lng, lat] = proj4(EPSG_3414, WGS84, [coord[0], coord[1]]);
+  const [lng, lat] = sourceCrs === EPSG_3414
+    ? proj4(EPSG_3414, WGS84, [coord[0], coord[1]])
+    : [coord[0], coord[1]];
+
   if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
-    throw new Error('Failed to transform one or more coordinates from EPSG:3414.');
+    throw new Error(`Failed to normalize one or more coordinates from ${sourceCrs}.`);
   }
 
   if (!isWithinSingapore(lng, lat)) {
@@ -85,37 +153,37 @@ function closeRing(ring) {
   return [...ring, [...first]];
 }
 
-function pruneGeometry(geometry, stats) {
+function pruneGeometry(geometry, sourceCrs, stats) {
   if (!geometry?.type) {
     throw new Error('Encountered a geometry without a valid type in the uploaded GeoJSON.');
   }
 
   switch (geometry.type) {
     case 'Point': {
-      const coordinate = transformCoordinate(geometry.coordinates, stats);
+      const coordinate = normalizeCoordinate(geometry.coordinates, sourceCrs, stats);
       return coordinate ? { ...geometry, coordinates: coordinate } : null;
     }
     case 'MultiPoint': {
       const coordinates = geometry.coordinates
-        .map((coordinate) => transformCoordinate(coordinate, stats))
+        .map((coordinate) => normalizeCoordinate(coordinate, sourceCrs, stats))
         .filter(Boolean);
       return coordinates.length ? { ...geometry, coordinates } : null;
     }
     case 'LineString': {
       const coordinates = geometry.coordinates
-        .map((coordinate) => transformCoordinate(coordinate, stats))
+        .map((coordinate) => normalizeCoordinate(coordinate, sourceCrs, stats))
         .filter(Boolean);
       return coordinates.length >= 2 ? { ...geometry, coordinates } : null;
     }
     case 'MultiLineString': {
       const coordinates = geometry.coordinates
-        .map((line) => line.map((coordinate) => transformCoordinate(coordinate, stats)).filter(Boolean))
+        .map((line) => line.map((coordinate) => normalizeCoordinate(coordinate, sourceCrs, stats)).filter(Boolean))
         .filter((line) => line.length >= 2);
       return coordinates.length ? { ...geometry, coordinates } : null;
     }
     case 'Polygon': {
       const coordinates = geometry.coordinates
-        .map((ring) => ring.map((coordinate) => transformCoordinate(coordinate, stats)).filter(Boolean))
+        .map((ring) => ring.map((coordinate) => normalizeCoordinate(coordinate, sourceCrs, stats)).filter(Boolean))
         .map((ring) => closeRing(ring))
         .filter((ring) => ring.length >= 4);
       return coordinates.length ? { ...geometry, coordinates } : null;
@@ -123,7 +191,7 @@ function pruneGeometry(geometry, stats) {
     case 'MultiPolygon': {
       const coordinates = geometry.coordinates
         .map((polygon) => polygon
-          .map((ring) => ring.map((coordinate) => transformCoordinate(coordinate, stats)).filter(Boolean))
+          .map((ring) => ring.map((coordinate) => normalizeCoordinate(coordinate, sourceCrs, stats)).filter(Boolean))
           .map((ring) => closeRing(ring))
           .filter((ring) => ring.length >= 4)
         )
@@ -132,7 +200,7 @@ function pruneGeometry(geometry, stats) {
     }
     case 'GeometryCollection': {
       const geometries = geometry.geometries
-        .map((entry) => pruneGeometry(entry, stats))
+        .map((entry) => pruneGeometry(entry, sourceCrs, stats))
         .filter(Boolean);
       return geometries.length ? { ...geometry, geometries } : null;
     }
@@ -146,8 +214,8 @@ function summarizeGeometryTypes(features) {
 }
 
 export function normalizeSingaporeGeoJson(input, fileName = 'Uploaded GeoJSON') {
-  validateCRS(input?.crs);
   const featureCollection = normalizeToFeatureCollection(input);
+  const sourceCrs = detectSourceCRS(featureCollection, parseExplicitCRS(input?.crs));
 
   const stats = {
     minLng: Infinity,
@@ -164,7 +232,7 @@ export function normalizeSingaporeGeoJson(input, fileName = 'Uploaded GeoJSON') 
       throw new Error(`Feature ${index + 1} is missing a valid geometry.`);
     }
 
-    const geometry = pruneGeometry(feature.geometry, stats);
+    const geometry = pruneGeometry(feature.geometry, sourceCrs, stats);
     if (!geometry) {
       stats.discardedFeatureCount += 1;
       return null;
@@ -178,7 +246,7 @@ export function normalizeSingaporeGeoJson(input, fileName = 'Uploaded GeoJSON') 
   }).filter(Boolean);
 
   if (!features.length) {
-    throw new Error('The uploaded GeoJSON did not contain any geometry inside Singapore after EPSG:3414 transformation.');
+    throw new Error(`The uploaded GeoJSON did not contain any geometry inside Singapore after normalization from ${sourceCrs}.`);
   }
 
   if (!Number.isFinite(stats.minLng) || !Number.isFinite(stats.minLat)) {
@@ -198,7 +266,9 @@ export function normalizeSingaporeGeoJson(input, fileName = 'Uploaded GeoJSON') 
         [stats.minLng, stats.minLat],
         [stats.maxLng, stats.maxLat],
       ],
-      crs: 'EPSG:3414 (SVY21 / Singapore TM)',
+      crs: sourceCrs === EPSG_3414
+        ? 'Source CRS: EPSG:3414 (SVY21 / Singapore TM)'
+        : 'Source CRS: EPSG:4326 (WGS84 longitude/latitude)',
       discardedCoordinateCount: stats.discardedCoordinateCount,
       discardedFeatureCount: stats.discardedFeatureCount,
     },

@@ -127,3 +127,11 @@
 - Updated `src/GeoJsonOverlayPanel.jsx` to show how many coordinates and features were skipped during import.
 - Verified a mixed-boundary sample keeps the Singapore-valid polygon geometry, drops the outside-only point feature, and reports the discarded counts in metadata.
 - Verified `npm run build` still passes outside the sandbox with the relaxed import behavior.
+
+## GeoJSON CRS Detection
+
+- Investigated `MasterPlan2014RailStation.geojson` and found its coordinates were already in WGS84 longitude/latitude, so the importer was wrongly applying an extra EPSG:3414 transform.
+- Updated the GeoJSON importer to honor explicit CRS metadata when present and auto-detect between EPSG:3414 and WGS84 when the file omits CRS metadata.
+- Updated the upload copy to describe the dual-CRS support more accurately for Singapore datasets.
+- Verified `MasterPlan2014RailStation.geojson` now loads as 208 polygon features with detected source CRS `EPSG:4326`, and a synthetic explicit `EPSG:3414` polygon still transforms back into the correct Singapore footprint.
+- Verified `npm run build` passes after the CRS detection update.

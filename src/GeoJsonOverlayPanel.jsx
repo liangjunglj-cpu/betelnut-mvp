@@ -42,7 +42,7 @@ export default function GeoJsonOverlayPanel({
       <div className="flex items-center justify-between mb-3">
         <div>
           <p className="font-serif text-[11px] font-semibold uppercase tracking-widest text-black">GeoJSON Overlay</p>
-          <p className="text-[10px] text-gray-400 uppercase tracking-wider">Singapore EPSG:3414 only</p>
+          <p className="text-[10px] text-gray-400 uppercase tracking-wider">Singapore EPSG:3414 or WGS84</p>
         </div>
         {overlayMeta && (
           <button
@@ -77,7 +77,7 @@ export default function GeoJsonOverlayPanel({
         />
         <Upload size={18} className="mx-auto mb-2 text-gray-400" />
         <p className="text-sm text-gray-600 font-medium">Drop a Singapore GeoJSON file here</p>
-        <p className="text-[11px] text-gray-400 mt-1">Assumed CRS: EPSG:3414 (SVY21 / Singapore TM)</p>
+        <p className="text-[11px] text-gray-400 mt-1">Source CRS is auto-detected between EPSG:3414 and WGS84.</p>
       </div>
 
       {error && (
@@ -110,7 +110,7 @@ export default function GeoJsonOverlayPanel({
 
           <div className="text-[11px] text-gray-600 flex items-start gap-2">
             <MapPinned size={14} className="mt-0.5 shrink-0" />
-            <span>The uploaded layer is transformed from EPSG:3414 into the map display CRS automatically.</span>
+            <span>The uploaded layer is normalized into the map display CRS automatically.</span>
           </div>
 
           {selectedFeature && (

@@ -279,7 +279,7 @@ export default function App() {
   const handleGeoJsonUpload = useCallback(async (file) => {
     if (!file) return;
     if (!file.name.toLowerCase().endsWith('.geojson') && !file.name.toLowerCase().endsWith('.json')) {
-      setGeoJsonUploadError('Please upload a .geojson file exported in Singapore EPSG:3414 coordinates.');
+      setGeoJsonUploadError('Please upload a Singapore .geojson file in EPSG:3414 or WGS84 coordinates.');
       return;
     }
 
