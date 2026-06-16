@@ -2,9 +2,12 @@ import asyncio
 import math
 import random
 import requests
+from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from synthesis_engine import SUPPORTED_OPERATIONS, qgis_template, run_synthesis
+from synthesis_theme import theme_payload
 
 # 1. Initialize FastAPI App
 app = FastAPI(
@@ -492,6 +495,73 @@ async def get_weather_forecast_2h():
 class ChatRequest(BaseModel):
     message: str
     context: str = ""
+
+
+class SynthesisLayerRequest(BaseModel):
+    name: str
+    data: Dict[str, Any]
+
+
+class SynthesisRequest(BaseModel):
+    source_layer: SynthesisLayerRequest
+    target_layer: Optional[SynthesisLayerRequest] = None
+    operation: str
+    params: Dict[str, Any] = {}
+
+
+class SynthesisScriptRequest(BaseModel):
+    source_name: str
+    target_name: str = ""
+    operation: str
+    params: Dict[str, Any] = {}
+
+
+@app.get("/api/synthesis/catalog")
+async def get_synthesis_catalog():
+    return {
+        "status": "success",
+        "crs": "EPSG:3414",
+        "theme": theme_payload(),
+        "operations": SUPPORTED_OPERATIONS,
+    }
+
+
+@app.post("/api/synthesis/run")
+async def run_synthesis_endpoint(request: SynthesisRequest):
+    try:
+        result = run_synthesis(
+            source_payload=request.source_layer.model_dump(),
+            target_payload=request.target_layer.model_dump() if request.target_layer else None,
+            operation=request.operation,
+            params=request.params,
+        )
+        return {"status": "success", **result}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Synthesis Error: {str(exc)}")
+
+
+@app.post("/api/synthesis/pyqgis-script")
+async def get_pyqgis_script(request: SynthesisScriptRequest):
+    try:
+        script = qgis_template(
+            {
+                "sourceName": request.source_name,
+                "targetName": request.target_name,
+                "operation": request.operation,
+                "params": request.params,
+            }
+        )
+        return {
+            "status": "success",
+            "script": script,
+            "crs": "EPSG:3414",
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"PyQGIS Template Error: {str(exc)}")
 
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):

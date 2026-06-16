@@ -9,6 +9,7 @@ import Gumball from './Gumball';
 import MapCanvas from './MapCanvas';
 import LandingPage from './LandingPage';
 import { normalizeSingaporeGeoJson } from './geojsonUtils';
+import { defaultLayerStyle } from './synthesisTheme';
 
 // Initial view state over Singapore (Orchard Road area)
 const INITIAL_VIEW_STATE = {
@@ -19,6 +20,50 @@ const INITIAL_VIEW_STATE = {
   bearing: 0
 };
 
+const FALLBACK_SYNTHESIS_OPERATIONS = [
+  { id: 'nearest_distance', label: 'Nearest Distance', description: 'Measure nearest distance in EPSG:3414.', requiresTarget: true, params: [
+    { id: 'source_measure', label: 'Source Measure', type: 'select', default: 'boundary', options: ['boundary', 'centroid', 'geometry'] },
+    { id: 'target_label_field', label: 'Target Label Field', type: 'text', default: '' },
+    { id: 'distance_field', label: 'Distance Field', type: 'text', default: 'distance_m' },
+    { id: 'class_count', label: 'Class Count', type: 'number', default: 5 },
+  ] },
+  { id: 'count_within', label: 'Count Within Polygon', description: 'Count how many target features fall within each source polygon.', requiresTarget: true, params: [
+    { id: 'predicate', label: 'Predicate', type: 'select', default: 'intersects', options: ['intersects', 'within', 'contains', 'touches', 'overlaps'] },
+    { id: 'count_field', label: 'Count Field', type: 'text', default: 'feature_count' },
+    { id: 'class_count', label: 'Class Count', type: 'number', default: 5 },
+  ] },
+  { id: 'buffer', label: 'Buffer', description: 'Create a metric buffer around source features.', requiresTarget: false, params: [
+    { id: 'distance_m', label: 'Buffer Distance (m)', type: 'number', default: 400 },
+    { id: 'dissolve', label: 'Dissolve Output', type: 'boolean', default: false },
+  ] },
+  { id: 'clip', label: 'Clip', description: 'Clip source by target.', requiresTarget: true, params: [] },
+  { id: 'intersection', label: 'Intersection', description: 'Intersect source with target.', requiresTarget: true, params: [] },
+  { id: 'difference', label: 'Difference', description: 'Subtract target from source.', requiresTarget: true, params: [] },
+  { id: 'dissolve', label: 'Dissolve', description: 'Dissolve by a shared field.', requiresTarget: false, params: [
+    { id: 'field', label: 'Dissolve Field', type: 'text', default: '' },
+  ] },
+  { id: 'centroid', label: 'Centroids', description: 'Generate centroid points from source geometry.', requiresTarget: false, params: [] },
+];
+
+function inferLayerRole(geometryTypes, kind = 'upload') {
+  if (kind === 'analysis' && geometryTypes.every((type) => type.includes('Point'))) return 'centroid';
+  if (geometryTypes.every((type) => type.includes('Point'))) return 'point';
+  if (geometryTypes.every((type) => type.includes('Line'))) return 'context_boundary';
+  return kind === 'analysis' ? 'thematic_polygon' : 'categorical_poly';
+}
+
+function buildLayerRecord({ data, meta, kind = 'upload', style, index = 0 }) {
+  const role = style?.role || inferLayerRole(meta.geometryTypes || [], kind);
+  return {
+    id: `${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    kind,
+    data,
+    meta,
+    active: true,
+    style: style || defaultLayerStyle(role, index),
+  };
+}
+
 export default function App() {
   const [showLanding, setShowLanding] = useState(true);
   const [viewState, setViewState] = useState(INITIAL_VIEW_STATE);
@@ -27,7 +72,6 @@ export default function App() {
     google3D: false,    // Heavy 3D tiles moved to optional toggle
     uraConservation: true,
     historicSites: false, // NHB Historic Sites
-    geojsonOverlay: false,
     footTraffic: false,
     vehicleTraffic: false,
     sandbox: false       // Sandbox mode for 3D model placement
@@ -140,10 +184,13 @@ export default function App() {
   // --- GENERAL APP STATE ---
   const [uraData, setUraData] = useState(null);
   const [historicSitesData, setHistoricSitesData] = useState(null);
-  const [uploadedGeoJsonData, setUploadedGeoJsonData] = useState(null);
-  const [uploadedGeoJsonMeta, setUploadedGeoJsonMeta] = useState(null);
+  const [uploadedLayers, setUploadedLayers] = useState([]);
   const [selectedGeoJsonFeature, setSelectedGeoJsonFeature] = useState(null);
   const [geoJsonUploadError, setGeoJsonUploadError] = useState('');
+  const [synthesisCatalog, setSynthesisCatalog] = useState({ operations: FALLBACK_SYNTHESIS_OPERATIONS });
+  const [synthesisBusy, setSynthesisBusy] = useState(false);
+  const [synthesisError, setSynthesisError] = useState('');
+  const [pyqgisScript, setPyqgisScript] = useState('');
   const [selectedBuilding, setSelectedBuilding] = useState(null);
   const [activeTab, setActiveTab] = useState('dossier');
   const [chatHistory, setChatHistory] = useState([
@@ -182,6 +229,22 @@ export default function App() {
       .then(res => res.json())
       .then(data => { if (data.status === 'success') setHistoricSitesData(data.data); })
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    fetch('/api/synthesis/catalog')
+      .then((res) => res.ok ? res.json() : Promise.reject(new Error(`Synthesis catalog failed with status ${res.status}`)))
+      .then((data) => {
+        if (data?.status === 'success') {
+          setSynthesisCatalog({
+            operations: data.operations || FALLBACK_SYNTHESIS_OPERATIONS,
+            theme: data.theme,
+          });
+        }
+      })
+      .catch(() => {
+        setSynthesisCatalog({ operations: FALLBACK_SYNTHESIS_OPERATIONS });
+      });
   }, []);
 
   // Handle click-to-place: when sandbox is active and a model is pending, place it at click location
@@ -289,35 +352,124 @@ export default function App() {
   }, [viewState.longitude, viewState.latitude, viewState.zoom]);
 
   const handleGeoJsonUpload = useCallback(async (file) => {
-    if (!file) return;
-    if (!file.name.toLowerCase().endsWith('.geojson') && !file.name.toLowerCase().endsWith('.json')) {
-      setGeoJsonUploadError('Please upload a Singapore .geojson file in EPSG:3414 or WGS84 coordinates.');
-      return;
-    }
+    const files = Array.isArray(file) ? file : [file].filter(Boolean);
+    if (!files.length) return;
 
     try {
-      const text = await file.text();
-      const parsed = JSON.parse(text);
-      const { data, meta } = normalizeSingaporeGeoJson(parsed, file.name);
-      setUploadedGeoJsonData(data);
-      setUploadedGeoJsonMeta(meta);
+      const nextLayers = [];
+      for (const entry of files) {
+        if (!entry.name.toLowerCase().endsWith('.geojson') && !entry.name.toLowerCase().endsWith('.json')) {
+          throw new Error('Please upload Singapore .geojson files in EPSG:3414 or WGS84 coordinates.');
+        }
+
+        const text = await entry.text();
+        const parsed = JSON.parse(text);
+        const { data, meta } = normalizeSingaporeGeoJson(parsed, entry.name);
+        nextLayers.push(buildLayerRecord({
+          data,
+          meta,
+          kind: 'upload',
+          index: uploadedLayers.length + nextLayers.length,
+        }));
+      }
+
+      setUploadedLayers((prev) => [...prev, ...nextLayers]);
       setSelectedGeoJsonFeature(null);
       setSelectedBuilding(null);
       setGeoJsonUploadError('');
-      setActiveLayers((prev) => ({ ...prev, geojsonOverlay: true }));
-      fitViewToBounds(meta.bounds);
+      if (nextLayers[nextLayers.length - 1]?.meta?.bounds) {
+        fitViewToBounds(nextLayers[nextLayers.length - 1].meta.bounds);
+      }
     } catch (error) {
       setGeoJsonUploadError(error.message || 'Could not read the uploaded GeoJSON file.');
     }
-  }, [fitViewToBounds]);
+  }, [fitViewToBounds, uploadedLayers.length]);
 
-  const clearGeoJsonOverlay = useCallback(() => {
-    setUploadedGeoJsonData(null);
-    setUploadedGeoJsonMeta(null);
-    setSelectedGeoJsonFeature(null);
-    setGeoJsonUploadError('');
-    setActiveLayers((prev) => ({ ...prev, geojsonOverlay: false }));
+  const removeUploadedLayer = useCallback((layerId) => {
+    setUploadedLayers((prev) => prev.filter((layer) => layer.id !== layerId));
+    setSelectedGeoJsonFeature((prev) => prev?.layerId === layerId ? null : prev);
   }, []);
+
+  const toggleUploadedLayer = useCallback((layerId) => {
+    setUploadedLayers((prev) => prev.map((layer) => layer.id === layerId ? { ...layer, active: !layer.active } : layer));
+  }, []);
+
+  const runSynthesis = useCallback(async ({ sourceLayerId, targetLayerId, operation, params }) => {
+    const sourceLayer = uploadedLayers.find((layer) => layer.id === sourceLayerId);
+    const targetLayer = uploadedLayers.find((layer) => layer.id === targetLayerId);
+    if (!sourceLayer) return;
+
+    setSynthesisBusy(true);
+    setSynthesisError('');
+    try {
+      const res = await fetch('/api/synthesis/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source_layer: { name: sourceLayer.meta.fileName, data: sourceLayer.data },
+          target_layer: targetLayer ? { name: targetLayer.meta.fileName, data: targetLayer.data } : null,
+          operation,
+          params,
+        }),
+      });
+      const payload = await res.json();
+      if (!res.ok) {
+        throw new Error(payload.detail || 'Synthesis failed.');
+      }
+
+      const resultLayer = buildLayerRecord({
+        data: payload.data,
+        meta: payload.meta,
+        kind: 'analysis',
+        style: payload.meta.style,
+      });
+
+      setUploadedLayers((prev) => [...prev, resultLayer]);
+      setSelectedBuilding(null);
+      setSelectedGeoJsonFeature(null);
+      fitViewToBounds(payload.meta.bounds);
+    } catch (error) {
+      setSynthesisError(error.message || 'Synthesis failed.');
+    } finally {
+      setSynthesisBusy(false);
+    }
+  }, [fitViewToBounds, uploadedLayers]);
+
+  const generatePyQgisScript = useCallback(async ({ sourceLayerId, targetLayerId, operation, params }) => {
+    const sourceLayer = uploadedLayers.find((layer) => layer.id === sourceLayerId);
+    const targetLayer = uploadedLayers.find((layer) => layer.id === targetLayerId);
+    if (!sourceLayer) return;
+
+    setSynthesisError('');
+    try {
+      const res = await fetch('/api/synthesis/pyqgis-script', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source_name: sourceLayer.meta.fileName.replace(/\.[^.]+$/, ''),
+          target_name: targetLayer?.meta.fileName.replace(/\.[^.]+$/, '') || '',
+          operation,
+          params,
+        }),
+      });
+      const payload = await res.json();
+      if (!res.ok) {
+        throw new Error(payload.detail || 'Could not generate the PyQGIS template.');
+      }
+      setPyqgisScript(payload.script || '');
+    } catch (error) {
+      setSynthesisError(error.message || 'Could not generate the PyQGIS template.');
+    }
+  }, [uploadedLayers]);
+
+  const copyPyQgisScript = useCallback(async () => {
+    if (!pyqgisScript) return;
+    try {
+      await navigator.clipboard.writeText(pyqgisScript);
+    } catch {
+      setSynthesisError('Could not copy the PyQGIS template to the clipboard.');
+    }
+  }, [pyqgisScript]);
 
   // Chat Submission Handler
   const handleChat = async (presetMessage = null) => {
@@ -346,7 +498,9 @@ export default function App() {
       const activeOverlays = [];
       if (activeLayers.uraConservation) activeOverlays.push('URA Conservation Areas');
       if (activeLayers.historicSites) activeOverlays.push('NHB Historic Sites');
-      if (activeLayers.geojsonOverlay && uploadedGeoJsonMeta) activeOverlays.push(`Uploaded GeoJSON (${uploadedGeoJsonMeta.fileName})`);
+      uploadedLayers.filter((layer) => layer.active).forEach((layer) => {
+        activeOverlays.push(`${layer.kind === 'analysis' ? 'Analysis' : 'GeoJSON'} (${layer.meta.fileName})`);
+      });
       if (activeLayers.footTraffic) activeOverlays.push('Foot Traffic Simulation');
       if (activeLayers.vehicleTraffic) activeOverlays.push('Vehicle Traffic Intensity');
       context += `Active Map Overlays: ${activeOverlays.join(', ') || 'None'}\n`;
@@ -390,7 +544,7 @@ export default function App() {
         uraData={uraData}
         historicSitesData={historicSitesData}
         trafficData={trafficData}
-        uploadedGeoJsonData={uploadedGeoJsonData}
+        uploadedLayers={uploadedLayers.filter((layer) => layer.active)}
         placedModels={placedModels}
         setPlacedModels={setPlacedModels}
         selectedModelId={selectedModelId}
@@ -445,9 +599,6 @@ export default function App() {
             <LayerCategory title="Heritage & Attractions" id="heritage" openCategories={openCategories} toggleCategory={toggleCategory}>
               <Toggle label="URA Conservation" icon={<FileText size={16} />} active={activeLayers.uraConservation} onClick={() => toggleLayer('uraConservation')} bgHint="bg-amber-100/60" />
               <Toggle label="NHB Historic Sites" icon={<Landmark size={16} />} active={activeLayers.historicSites} onClick={() => toggleLayer('historicSites')} bgHint="bg-amber-100/60" />
-              {uploadedGeoJsonMeta && (
-                <Toggle label="Uploaded GeoJSON" icon={<Layers size={16} />} active={activeLayers.geojsonOverlay} onClick={() => toggleLayer('geojsonOverlay')} bgHint="bg-teal-100/60" />
-              )}
             </LayerCategory>
 
             <LayerCategory title="Environment & Traffic" id="environment" openCategories={openCategories} toggleCategory={toggleCategory}>
@@ -460,13 +611,19 @@ export default function App() {
             </LayerCategory>
 
             <GeoJsonOverlayPanel
-              overlayMeta={uploadedGeoJsonMeta}
+              uploadedLayers={uploadedLayers}
               selectedFeature={selectedGeoJsonFeature}
-              error={geoJsonUploadError}
-              active={activeLayers.geojsonOverlay}
-              onToggle={() => toggleLayer('geojsonOverlay')}
+              uploadError={geoJsonUploadError}
+              synthesisError={synthesisError}
+              synthesisBusy={synthesisBusy}
+              operations={synthesisCatalog.operations || FALLBACK_SYNTHESIS_OPERATIONS}
+              pyqgisScript={pyqgisScript}
               onUpload={handleGeoJsonUpload}
-              onClear={clearGeoJsonOverlay}
+              onToggleLayer={toggleUploadedLayer}
+              onRemoveLayer={removeUploadedLayer}
+              onRunSynthesis={runSynthesis}
+              onGeneratePyQgis={generatePyQgisScript}
+              onCopyPyQgis={copyPyQgisScript}
             />
 
             <div className="mt-4 pt-4 border-t border-gray-200">

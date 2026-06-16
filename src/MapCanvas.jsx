@@ -4,6 +4,7 @@ import { Tile3DLayer, TileLayer, TripsLayer } from '@deck.gl/geo-layers';
 import { BitmapLayer, GeoJsonLayer } from '@deck.gl/layers';
 import { AmbientLight, DirectionalLight, LightingEffect } from '@deck.gl/core';
 import { createSandboxLayers } from './SandboxLayer';
+import { defaultLayerStyle, pickChoroplethColor } from './synthesisTheme';
 
 // Access Google API Key from Vite env
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
@@ -22,7 +23,7 @@ const lightingEffect = new LightingEffect({ ambientLight, dirLight });
 
 const MapCanvas = React.memo(({
   viewState, setViewState, activeLayers, uraData, historicSitesData,
-  trafficData, uploadedGeoJsonData, placedModels, setPlacedModels, selectedModelId,
+  trafficData, uploadedLayers, placedModels, setPlacedModels, selectedModelId,
   setSelectedBuilding, setSelectedGeoJsonFeature, selectedBuilding, isPlacing, handleDeckClick, deckRef
 }) => {
   const [time, setTime] = useState(0);
@@ -138,30 +139,41 @@ const MapCanvas = React.memo(({
     }
   }), [historicSitesData, activeLayers.historicSites, setSelectedBuilding, setSelectedGeoJsonFeature]);
 
-  const uploadedGeoJsonLayer = useMemo(() => uploadedGeoJsonData ? new GeoJsonLayer({
-    id: 'uploaded-geojson-layer',
-    data: uploadedGeoJsonData,
-    visible: activeLayers.geojsonOverlay,
-    pickable: true,
-    autoHighlight: true,
-    stroked: true,
-    filled: true,
-    lineWidthMinPixels: 2,
-    pointRadiusMinPixels: 6,
-    pointRadiusMaxPixels: 10,
-    material: false,
-    getFillColor: [20, 184, 166, 72],
-    getLineColor: [13, 148, 136, 220],
-    getPointRadius: 8,
-    onClick: ({ object }) => {
-      if (!object) return;
-      setSelectedBuilding(null);
-      setSelectedGeoJsonFeature({
-        geometryType: object.geometry?.type || 'Feature',
-        properties: object.properties || {},
-      });
-    }
-  }) : null, [uploadedGeoJsonData, activeLayers.geojsonOverlay, setSelectedBuilding, setSelectedGeoJsonFeature]);
+  const uploadedGeoJsonLayers = useMemo(() => uploadedLayers.map((layer, index) => {
+    const fallbackStyle = defaultLayerStyle(layer.style?.role || 'categorical_poly', index);
+    const resolvedStyle = {
+      ...fallbackStyle,
+      ...(layer.style || {}),
+    };
+
+    return new GeoJsonLayer({
+      id: `uploaded-geojson-layer-${layer.id}`,
+      data: layer.data,
+      visible: layer.active,
+      pickable: true,
+      autoHighlight: true,
+      stroked: true,
+      filled: true,
+      lineWidthMinPixels: Math.max(1.2, resolvedStyle.lineWidth || 1.4),
+      pointRadiusMinPixels: 6,
+      pointRadiusMaxPixels: 10,
+      material: false,
+      getFillColor: (feature) => pickChoroplethColor(feature.properties, resolvedStyle),
+      getLineColor: resolvedStyle.lineColor || fallbackStyle.lineColor,
+      getPointRadius: 8,
+      getPointFillColor: resolvedStyle.pointColor || resolvedStyle.fillColor || fallbackStyle.pointColor,
+      onClick: ({ object }) => {
+        if (!object) return;
+        setSelectedBuilding(null);
+        setSelectedGeoJsonFeature({
+          layerId: layer.id,
+          layerName: layer.meta.fileName,
+          geometryType: object.geometry?.type || 'Feature',
+          properties: object.properties || {},
+        });
+      }
+    });
+  }), [uploadedLayers, setSelectedBuilding, setSelectedGeoJsonFeature]);
 
   const footTrafficLayer = new TripsLayer({
     id: 'foot-traffic-layer',
@@ -209,7 +221,7 @@ const MapCanvas = React.memo(({
       layers={[
         cartoBasemapLayer,
         google3DTilesLayer,
-        uploadedGeoJsonLayer,
+        ...uploadedGeoJsonLayers,
         uraLayer,
         historicSitesLayer,
         footTrafficLayer,

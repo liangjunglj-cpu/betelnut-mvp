@@ -141,3 +141,11 @@
 - Moved the uploaded GeoJSON layer below the core heritage layers so URA and historic-site features remain clickable when overlays overlap.
 - Added deck-level background click handling so clicking empty map space clears the current uploaded-feature selection instead of leaving the interface stuck on it.
 - Consolidated the left layer panel into one scrollable region so the GeoJSON upload panel no longer traps the rest of the layer controls off-screen.
+
+## Singapore Map Synthesis
+
+- Added a deterministic backend synthesis engine in `api/synthesis_engine.py` with a fixed EPSG:3414 workflow for nearest distance, count within polygon, buffer, clip, intersection, difference, dissolve, and centroid generation.
+- Added a shared Warm Editorial theme in `api/synthesis_theme.py` and `src/synthesisTheme.js` so backend results, frontend layers, and generated PyQGIS templates share the same palette and role-based defaults.
+- Added `/api/synthesis/catalog`, `/api/synthesis/run`, and `/api/synthesis/pyqgis-script` so Betelnut can expose a fixed operation catalog, run server-side synthesis, and hand users a paste-ready PyQGIS script without generating fresh GIS code each time.
+- Refactored the frontend into a multi-layer analysis workflow: multiple GeoJSON uploads, per-layer visibility/removal, operation selection, synthesis result layers, and PyQGIS copy-out in `src/GeoJsonOverlayPanel.jsx`.
+- Verified direct Python checks for nearest distance, count within, buffer, centroid, and clip outputs, verified API import/compile checks, and verified `npm run build` passed with the new synthesis UI.

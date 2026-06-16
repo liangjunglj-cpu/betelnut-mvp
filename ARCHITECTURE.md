@@ -11,6 +11,7 @@ Betelnut is a map-first conservation copilot tailored for urban planning and arc
 - **Frontend:** React 19, Vite, Tailwind CSS
 - **Map Engine:** [deck.gl](https://deck.gl/) (React wrapper) + [loaders.gl](https://loaders.gl/) for 3D tiles and glTF models
 - **Backend:** FastAPI (Python 3) via Uvicorn (local) or Vercel Serverless Functions
+- **Spatial Analysis Engine:** Shapely + PyProj for deterministic Singapore synthesis operations in EPSG:3414
 - **AI Integration:** OpenRouter (Gemini 2.5 Pro for chat, Gemini 3.1 Flash for vision/rendering)
 - **External Data Sources:**
   - Google Maps API (Photorealistic 3D Tiles)
@@ -26,8 +27,9 @@ Betelnut is a map-first conservation copilot tailored for urban planning and arc
 ```text
 Betelnut/
 ├── api/
-│   ├── index.py           # FastAPI server & all endpoints (10 routes)
-│   ├── gee_script.py      # Earth Engine logic (Vegetation tiles)
+│   ├── index.py           # FastAPI server & all endpoints
+│   ├── synthesis_engine.py # Fixed GIS operations (distance, count, buffer, overlay, dissolve, centroid)
+│   ├── synthesis_theme.py  # Warm Editorial palette + role-based styling defaults
 │   └── requirements.txt   # Python dependencies
 ├── public/
 │   ├── data/
@@ -38,9 +40,12 @@ Betelnut/
 ├── src/
 │   ├── App.jsx            # Main dashboard, UI layout, state orchestrator (665 lines)
 │   ├── MapCanvas.jsx      # Deck.gl canvas renderer, all layer composition (287 lines)
+│   ├── GeoJsonOverlayPanel.jsx # Multi-layer upload and synthesis workflow
+│   ├── geojsonUtils.js    # GeoJSON upload normalization and CRS detection
 │   ├── SandboxLayer.jsx   # 3D model upload/placement UI + layer factory (432 lines)
 │   ├── Gumball.jsx        # Rhino-style SVG transform widget (332 lines)
 │   ├── RenderCapture.jsx  # Viewport screenshot capture + AI render utilities (99 lines)
+│   ├── synthesisTheme.js  # Warm Editorial palette mirrored for deck.gl styling
 │   ├── gltfWorker.js      # Web Worker for gltf-transform optimization (40 lines)
 │   ├── main.jsx           # React entry point
 │   └── index.css          # Tailwind / base styles
@@ -69,7 +74,7 @@ main.jsx
 
 ---
 
-## API Endpoints (10 routes, all in `api/index.py`)
+## API Endpoints (selected routes in `api/index.py`)
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -80,9 +85,11 @@ main.jsx
 | POST | `/api/osm/polygons` | Overpass API polygon fetch for parks/attractions in viewport |
 | POST | `/api/traffic/simulate` | Generate traffic paths weighted by POI proximity |
 | GET | `/api/weather/forecast-2h` | Proxy data.gov.sg 2-hour weather forecast |
-| GET | `/api/gee-layer/vegetation` | Google Earth Engine MODIS NDVI tile URL |
 | POST | `/api/chat` | Conservation copilot chat via OpenRouter → Gemini 2.5 Pro |
 | POST | `/api/generate-render` | AI architectural viz via Gemini 3.1 Flash (base64 in/out) |
+| GET | `/api/synthesis/catalog` | Returns the fixed EPSG:3414 synthesis operation catalog and Warm Editorial theme |
+| POST | `/api/synthesis/run` | Runs deterministic GeoJSON synthesis operations server-side and returns a styled result layer |
+| POST | `/api/synthesis/pyqgis-script` | Generates a paste-ready PyQGIS template aligned to the same CRS/theme conventions |
 
 **Fallback chain:** Each data endpoint has a static GeoJSON fallback in `public/data/` for when APIs are rate-limited or offline.
 
@@ -104,6 +111,7 @@ main.jsx
 | 8 | Foot Traffic | `TripsLayer` | Blue (59,130,246) | Trail 200px, width 4 |
 | 9 | Vehicle Traffic | `TripsLayer` | Orange (249,115,22) | Trail 300px, width 6 |
 | 10 | Sandbox Models | `ScenegraphLayer[]` | White / Blue (selected) | One layer per unique model URL (GPU instancing) |
+| 11 | Uploaded / Analysis Layers | `GeoJsonLayer[]` | Warm Editorial themed | User uploads plus derived synthesis result layers |
 
 **Additional features not in layer list:**
 - **Constriction Analysis** — deterministic overlay highlighting traffic-conservation conflicts (`OBJECTID % 7 == 0`)
@@ -157,6 +165,47 @@ A custom SVG overlay pinned to the model's 2D screen coordinate:
 - Uses deck.gl's `preserveDrawingBuffer: true` to snapshot the WebGL canvas
 - Converts to Base64 and prompts Gemini 3.1 Flash to generate photorealistic architectural viz
 - `RenderCapture.jsx` builds context-aware prompts including placed model names, selected building, and camera angle (aerial vs street-level)
+
+---
+
+## Singapore Map Synthesis
+
+Betelnut now includes a deterministic map-synthesis workflow aimed at common architecture-studio GIS tasks without regenerating new code per request.
+
+### Design Rules
+
+1. **Metric operations always run in EPSG:3414.** GeoJSON uploads are normalized client-side for display, then reprojected again server-side for analysis.
+2. **Users configure operations instead of generating code.** The frontend sends a compact operation spec; the backend executes fixed logic.
+3. **The Warm Editorial palette is shared across outputs.** Result layers and PyQGIS templates draw from the same role-based style system.
+
+### Current Fixed Operations
+
+- `nearest_distance`
+- `count_within`
+- `buffer`
+- `clip`
+- `intersection`
+- `difference`
+- `dissolve`
+- `centroid`
+
+### Frontend Flow
+
+`GeoJsonOverlayPanel.jsx` now acts as a lightweight GIS workbench:
+
+1. Upload one or more GeoJSON layers.
+2. Toggle or remove individual layers.
+3. Choose source and target inputs.
+4. Run a fixed synthesis operation.
+5. Add the derived result back onto the map as a new themed layer.
+6. Optionally copy a matching PyQGIS template.
+
+### Backend Flow
+
+1. `/api/synthesis/catalog` exposes the operation list and theme metadata.
+2. `/api/synthesis/run` validates the uploaded GeoJSON, coerces the work into EPSG:3414, and runs the requested operation with Shapely.
+3. The result is converted back to WGS84 GeoJSON for deck.gl rendering, with style metadata attached for the Warm Editorial palette.
+4. `/api/synthesis/pyqgis-script` emits a deterministic PyQGIS starter script matching the same CRS and palette conventions.
 
 ---
 
