@@ -15,9 +15,8 @@ Betelnut is a map-first conservation copilot tailored for urban planning and arc
 - **AI Integration:** OpenRouter (Gemini 2.5 Pro for chat, Gemini 3.1 Flash for vision/rendering)
 - **External Data Sources:**
   - Google Maps API (Photorealistic 3D Tiles)
-  - data.gov.sg (URA Conservation maps, NHB Historic Sites, NParks, STB Tourist Attractions)
-  - OpenStreetMap / Overpass API (Road/Footpath geometry for traffic simulation)
-  - Google Earth Engine / GEE (Vegetation/NDVI map layers)
+  - data.gov.sg (URA Conservation maps, NHB Historic Sites)
+  - OpenStreetMap / Overpass API (Road/footpath geometry for traffic simulation)
   - data.gov.sg (2-hour weather forecast)
 
 ---
@@ -34,14 +33,15 @@ Betelnut/
 ├── public/
 │   ├── data/
 │   │   ├── ura_fallback.geojson    # Fallback URA Conservation Areas (~197KB)
-│   │   └── osm_fallback.geojson    # Fallback OSM parks/attractions (~197KB)
-│   ├── traffic_data.json           # Static traffic simulation fallback (~43MB)
+│   │   ├── historic_sites_fallback.geojson # Fallback NHB Historic Sites
+│   │   └── osm_fallback.geojson    # Legacy sample data retained in repo, not part of active map flow
+│   ├── traffic_data.json           # Legacy traffic sample retained in repo, not used by the current traffic path
 │   └── test_cube.glb               # Test 3D model for sandbox demo
 ├── src/
 │   ├── App.jsx            # Main dashboard, UI layout, state orchestrator (665 lines)
 │   ├── MapCanvas.jsx      # Deck.gl canvas renderer, all layer composition (287 lines)
 │   ├── GeoJsonOverlayPanel.jsx # Multi-layer upload and synthesis workflow
-│   ├── geojsonUtils.js    # GeoJSON upload normalization and CRS detection
+│   ├── geojsonUtils.js    # GeoJSON upload normalization, CRS detection, and semantic field analysis
 │   ├── SandboxLayer.jsx   # 3D model upload/placement UI + layer factory (432 lines)
 │   ├── Gumball.jsx        # Rhino-style SVG transform widget (332 lines)
 │   ├── RenderCapture.jsx  # Viewport screenshot capture + AI render utilities (99 lines)
@@ -80,10 +80,7 @@ main.jsx
 |--------|------|-------------|
 | GET | `/api/ura/conservation-data` | URA Conservation Area GeoJSON from data.gov.sg |
 | GET | `/api/datagov/historic-sites` | NHB Historic Sites GeoJSON |
-| GET | `/api/datagov/tourist-attractions` | Tourist Attractions GeoJSON |
-| GET | `/api/datagov/parks` | Parks GeoJSON |
-| POST | `/api/osm/polygons` | Overpass API polygon fetch for parks/attractions in viewport |
-| POST | `/api/traffic/simulate` | Generate traffic paths weighted by POI proximity |
+| POST | `/api/traffic/simulate` | Generate viewport-scoped traffic trips from real OSM road/footpath geometry |
 | GET | `/api/weather/forecast-2h` | Proxy data.gov.sg 2-hour weather forecast |
 | POST | `/api/chat` | Conservation copilot chat via OpenRouter → Gemini 2.5 Pro |
 | POST | `/api/generate-render` | AI architectural viz via Gemini 3.1 Flash (base64 in/out) |
@@ -103,19 +100,16 @@ main.jsx
 |---|-------|------|-------|-------|
 | 1 | Carto Basemap | `TileLayer` | Light gray | Clean 2D street map, default on |
 | 2 | Google 3D Tiles | `Tile3DLayer` | Photorealistic | Heavy GPU load, 256MB memory cap, SSE 16 |
-| 3 | GEE Vegetation | `TileLayer` | Green raster | NDVI tiles at 60% opacity |
-| 4 | URA Conservation | `GeoJsonLayer` | Amber / Black (selected) | Click-to-select for dossier. Red in constriction mode |
+| 3 | Uploaded / Analysis Layers | `GeoJsonLayer[]` | Warm Editorial themed | User uploads plus derived synthesis result layers |
+| 4 | URA Conservation | `GeoJsonLayer` | Amber / Black (selected) | Click-to-select for dossier |
 | 5 | Historic Sites | `GeoJsonLayer` | Amber circles + "H" label | Point features from NHB |
-| 6 | Tourist Attractions | `GeoJsonLayer` | Purple polygons | Dynamic OSM fetch |
-| 7 | Parks | `GeoJsonLayer` | Green polygons | Dynamic OSM fetch |
-| 8 | Foot Traffic | `TripsLayer` | Blue (59,130,246) | Trail 200px, width 4 |
-| 9 | Vehicle Traffic | `TripsLayer` | Orange (249,115,22) | Trail 300px, width 6 |
-| 10 | Sandbox Models | `ScenegraphLayer[]` | White / Blue (selected) | One layer per unique model URL (GPU instancing) |
-| 11 | Uploaded / Analysis Layers | `GeoJsonLayer[]` | Warm Editorial themed | User uploads plus derived synthesis result layers |
+| 6 | Foot Traffic | `TripsLayer` | Blue (59,130,246) | Trail 200px, width 4 |
+| 7 | Vehicle Traffic | `TripsLayer` | Orange (249,115,22) | Trail 300px, width 6 |
+| 8 | Sandbox Models | `ScenegraphLayer[]` | White / Blue (selected) | One layer per unique model URL (GPU instancing) |
 
-**Additional features not in layer list:**
-- **Constriction Analysis** — deterministic overlay highlighting traffic-conservation conflicts (`OBJECTID % 7 == 0`)
-- **Weather Badge** — floating 2-hour forecast widget, auto-refreshes every 30 minutes
+**Notes:**
+- Tourist attractions, parks/reserves, and GEE vegetation are no longer active product layers.
+- The weather proxy still exists on the backend, but there is no active weather UI in the current frontend.
 
 ---
 
@@ -123,12 +117,13 @@ main.jsx
 
 Unlike standard traffic apps showing real-time speeds, Betelnut relies on *simulated situational intensity*.
 
-1. **Client Event:** User enables traffic layers, or pans/zooms the map while they are active. A 500ms debounced effect triggers.
+1. **Client Event:** User enables traffic layers, or pans/zooms the map while they are active. A debounced effect triggers from `App.jsx`.
 2. **Backend Query:** Frontend sends the current viewport bounding box (`[South, West, North, East]`) to `POST /api/traffic/simulate`.
-3. **Overpass Fetch:** Backend queries the Overpass API for all `highway` (vehicles) and `footway`/`pedestrian` paths inside that bounding box.
-4. **Attraction Weighting:** Roads and pathways located closer to known POIs (tourist attractions, parks) generate a higher density of simulated trips.
-5. **Animation Math:** Vehicles get higher speed multipliers and fewer waypoints; foot traffic gets lower speeds. Timestamps are synthesized for `TripsLayer`.
-6. **Caching:** Requests are rounded to ~110m grids and cached in-memory on the backend to safeguard the Overpass rate limit.
+3. **Overpass Fetch:** Backend queries the Overpass API for `highway` (vehicles) and `footway` / `pedestrian` / `path` / `cycleway` geometry inside that bounding box.
+4. **Axis Normalization:** Returned ways are split into straighter segments and filtered against dominant local movement axes so synthetic animation follows credible road/pedestrian bearings.
+5. **Trip Generation:** Vehicles get higher speed multipliers and fewer waypoints; foot traffic gets lower speeds. Timestamps are synthesized for `TripsLayer`.
+6. **Fallback Policy:** If no trustworthy local path network is available, the API returns empty traffic rather than inventing misleading paths.
+7. **Caching:** Requests are rounded to ~110m grids and cached in-memory on the backend to safeguard the Overpass rate limit.
 
 ---
 
@@ -177,6 +172,8 @@ Betelnut now includes a deterministic map-synthesis workflow aimed at common arc
 1. **Metric operations always run in EPSG:3414.** GeoJSON uploads are normalized client-side for display, then reprojected again server-side for analysis.
 2. **Users configure operations instead of generating code.** The frontend sends a compact operation spec; the backend executes fixed logic.
 3. **The Warm Editorial palette is shared across outputs.** Result layers and PyQGIS templates draw from the same role-based style system.
+4. **Field choices are semantically filtered before analysis.** Upload-time metadata identifies plausible label and dissolve fields so the UI exposes synthesis-friendly attribute options instead of every raw property.
+5. **Request bodies are intentionally slimmed for serverless limits.** The frontend sends geometry plus only summary fields and explicitly required attributes, rather than the full uploaded property tables.
 
 ### Current Fixed Operations
 
@@ -194,18 +191,20 @@ Betelnut now includes a deterministic map-synthesis workflow aimed at common arc
 `GeoJsonOverlayPanel.jsx` now acts as a lightweight GIS workbench:
 
 1. Upload one or more GeoJSON layers.
-2. Toggle or remove individual layers.
-3. Choose source and target inputs.
-4. Run a fixed synthesis operation.
-5. Add the derived result back onto the map as a new themed layer.
-6. Optionally copy a matching PyQGIS template.
+2. Normalize them for Singapore display and compute field metadata on upload (`fieldCatalog`, `fieldOptions`, semantic label/dissolve candidates).
+3. Toggle or remove individual layers.
+4. Choose source and target inputs.
+5. Run a fixed synthesis operation using semantically filtered field dropdowns.
+6. Add the derived result back onto the map as a new themed layer.
+7. Optionally copy a matching PyQGIS template.
 
 ### Backend Flow
 
 1. `/api/synthesis/catalog` exposes the operation list and theme metadata.
-2. `/api/synthesis/run` validates the uploaded GeoJSON, coerces the work into EPSG:3414, and runs the requested operation with Shapely.
-3. The result is converted back to WGS84 GeoJSON for deck.gl rendering, with style metadata attached for the Warm Editorial palette.
-4. `/api/synthesis/pyqgis-script` emits a deterministic PyQGIS starter script matching the same CRS and palette conventions.
+2. The frontend builds a reduced request body from uploaded layers, preserving geometry and only the small set of attributes needed for the requested operation.
+3. `/api/synthesis/run` validates the uploaded GeoJSON, coerces the work into EPSG:3414, and runs the requested operation with Shapely.
+4. The result is converted back to WGS84 GeoJSON for deck.gl rendering, with style metadata attached for the Warm Editorial palette.
+5. `/api/synthesis/pyqgis-script` emits a deterministic PyQGIS starter script matching the same CRS and palette conventions.
 
 ---
 

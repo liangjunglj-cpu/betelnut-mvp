@@ -164,3 +164,18 @@
 - Updated `src/App.jsx` to parse synthesis API responses defensively, so a server-side plain-text error no longer surfaces as `Unexpected token ... is not valid JSON`.
 - Updated `src/GeoJsonOverlayPanel.jsx` so target label fields and dissolve/source attribute fields are driven from detected layer attributes, and distance/count output field names use controlled dropdown options.
 - Expanded `src/LandingPage.jsx` with a dedicated explanation of how Betelnut normalizes uploaded GeoJSON, standardizes metric operations to EPSG:3414, and returns styled synthesis layers plus PyQGIS templates.
+
+# Synthesis Payload Guardrails
+
+- [x] Confirm whether `FUNCTION_PAYLOAD_TOO_LARGE` is caused by request size or by specific selected fields
+- [x] Add upload-time semantic field analysis for label and dissolve candidates
+- [x] Slim synthesis request payloads to geometry plus only necessary summary/selected attributes
+- [x] Add a client-side size guard with a clearer error for oversized requests that still exceed serverless limits
+- [x] Re-verify API compile and frontend build after the payload changes
+
+## Review
+
+- Confirmed the latest synthesis failure points to oversized request bodies rather than one bad target label field; the app had been POSTing full source and target GeoJSON payloads back to the serverless API.
+- Updated `src/geojsonUtils.js` to compute field catalogs at upload time, including semantic label candidates, dissolve candidates, and preferred summary fields.
+- Updated `src/GeoJsonOverlayPanel.jsx` so the label and dissolve dropdowns only surface fields that pass those synthesis-oriented filters, instead of exposing every raw attribute name.
+- Updated `src/App.jsx` so synthesis requests now send geometry plus only a small set of summary fields and explicitly required attributes, with a preflight size check that explains when a layer still needs to be split or clipped.

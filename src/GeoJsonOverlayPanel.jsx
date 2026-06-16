@@ -12,6 +12,8 @@ function buildDefaultParams(operation) {
 }
 
 function featureFieldHints(layer) {
+  const metaOptions = layer?.meta?.fieldOptions?.all;
+  if (Array.isArray(metaOptions) && metaOptions.length) return metaOptions.slice(0, 12);
   if (!layer?.data?.features?.length) return [];
   const fields = new Set();
   layer.data.features.slice(0, 8).forEach((feature) => {
@@ -20,9 +22,16 @@ function featureFieldHints(layer) {
   return [...fields].slice(0, 8);
 }
 
-function resolveFieldOptions(param, sourceHints, targetHints) {
+function semanticFieldOptions(layer, purpose = 'all') {
+  const options = layer?.meta?.fieldOptions?.[purpose];
+  if (Array.isArray(options) && options.length) return options;
+  return featureFieldHints(layer);
+}
+
+function resolveFieldOptions(param, sourceLayer, targetLayer) {
   if (param.type !== 'field-select') return [];
-  const hints = param.fieldSource === 'target' ? targetHints : sourceHints;
+  const layer = param.fieldSource === 'target' ? targetLayer : sourceLayer;
+  const hints = semanticFieldOptions(layer, param.fieldPurpose || 'all');
   const options = hints.map((field) => ({ value: field, label: field }));
   if (param.allowEmpty) {
     options.unshift({ value: '', label: param.emptyLabel || 'None' });
@@ -126,6 +135,8 @@ export default function GeoJsonOverlayPanel({
 
   const sourceHints = featureFieldHints(activeSourceLayer);
   const targetHints = featureFieldHints(activeTargetLayer);
+  const targetSemanticLabels = semanticFieldOptions(activeTargetLayer, 'label');
+  const sourceSemanticDissolve = semanticFieldOptions(activeSourceLayer, 'dissolve');
   const featureProperties = selectedFeature?.properties
     ? Object.entries(selectedFeature.properties).slice(0, 12)
     : [];
@@ -138,7 +149,7 @@ export default function GeoJsonOverlayPanel({
 
       (selectedOperation.params || []).forEach((param) => {
         if (param.type !== 'field-select') return;
-        const options = resolveFieldOptions(param, sourceHints, targetHints);
+        const options = resolveFieldOptions(param, activeSourceLayer, activeTargetLayer);
         const allowedValues = new Set(options.map((option) => option.value));
         const currentValue = nextParams[param.id] ?? param.default ?? '';
         if (!allowedValues.size) {
@@ -156,7 +167,7 @@ export default function GeoJsonOverlayPanel({
 
       return changed ? { ...prev, params: nextParams } : prev;
     });
-  }, [selectedOperation, sourceHints, targetHints]);
+  }, [selectedOperation, activeSourceLayer, activeTargetLayer]);
 
   return (
     <div className="mt-4 pt-4 border-t border-gray-200">
@@ -305,7 +316,11 @@ export default function GeoJsonOverlayPanel({
             </label>
           )}
 
-          {(selectedOperation.params || []).map((param) => (
+          {(selectedOperation.params || []).map((param) => {
+            const fieldOptions = param.type === 'field-select'
+              ? resolveFieldOptions(param, activeSourceLayer, activeTargetLayer)
+              : [];
+            return (
             <label key={param.id} className="block">
               <span className="text-[10px] uppercase tracking-wider text-gray-500">{param.label}</span>
               {param.type === 'field-select' ? (
@@ -313,10 +328,10 @@ export default function GeoJsonOverlayPanel({
                   value={analysisState.params?.[param.id] ?? param.default ?? ''}
                   onChange={(event) => updateParam(param.id, event.target.value, 'text')}
                   className="mt-1 w-full border border-gray-300 bg-white px-3 py-2 text-sm"
-                  disabled={!resolveFieldOptions(param, sourceHints, targetHints).length}
+                  disabled={!fieldOptions.length}
                 >
-                  {resolveFieldOptions(param, sourceHints, targetHints).length ? (
-                    resolveFieldOptions(param, sourceHints, targetHints).map((option) => (
+                  {fieldOptions.length ? (
+                    fieldOptions.map((option) => (
                       <option key={`${param.id}-${option.value || 'empty'}`} value={option.value}>{option.label}</option>
                     ))
                   ) : (
@@ -356,14 +371,29 @@ export default function GeoJsonOverlayPanel({
                 </p>
               )}
               {param.type === 'field-select' && (
-                <p className="mt-1 text-[11px] text-gray-400">
-                  {param.fieldSource === 'target'
-                    ? `Pulled from target layer attributes: ${targetHints.join(', ') || 'No sample attributes found'}`
-                    : `Pulled from source layer attributes: ${sourceHints.join(', ') || 'No sample attributes found'}`}
-                </p>
+                <>
+                  <p className="mt-1 text-[11px] text-gray-400">
+                    {param.fieldSource === 'target'
+                      ? `Pulled from target layer attributes: ${targetHints.join(', ') || 'No sample attributes found'}`
+                      : `Pulled from source layer attributes: ${sourceHints.join(', ') || 'No sample attributes found'}`}
+                  </p>
+                  {param.fieldPurpose === 'label' && (
+                    <p className="mt-1 text-[11px] text-gray-400">
+                      Semantic filter keeps short scalar fields that behave well as readable labels.
+                      Eligible target labels: {targetSemanticLabels.join(', ') || 'No suitable label fields detected'}.
+                    </p>
+                  )}
+                  {param.fieldPurpose === 'dissolve' && (
+                    <p className="mt-1 text-[11px] text-gray-400">
+                      Dissolve choices are limited to lower-cardinality scalar fields.
+                      Eligible source fields: {sourceSemanticDissolve.join(', ') || 'No suitable dissolve fields detected'}.
+                    </p>
+                  )}
+                </>
               )}
             </label>
-          ))}
+            );
+          })}
 
           <div className="flex gap-2">
             <button

@@ -8,6 +8,9 @@ const SINGAPORE_BOUNDS = {
   south: 1.15,
   north: 1.5,
 };
+const FIELD_SAMPLE_LIMIT = 6;
+const FIELD_SET_LIMIT = 512;
+const SYSTEM_FIELD_PATTERN = /^(objectid|fid|gid|id|shape(?:_.*)?|geom(?:etry)?|_.*)$/i;
 
 proj4.defs(
   EPSG_3414,
@@ -213,6 +216,166 @@ function summarizeGeometryTypes(features) {
   return [...new Set(features.map((feature) => feature.geometry?.type).filter(Boolean))];
 }
 
+function classifyPropertyValue(value) {
+  if (value === null || value === undefined || value === '') return 'empty';
+  if (typeof value === 'string') return 'string';
+  if (typeof value === 'number' && Number.isFinite(value)) return 'number';
+  if (typeof value === 'boolean') return 'boolean';
+  return 'other';
+}
+
+function fieldKeywordScore(fieldName) {
+  const name = String(fieldName || '').toLowerCase();
+  let score = 0;
+  if (/(^|_)(name|label|title)(_|$)/.test(name)) score += 6;
+  if (/(station|subzone|zone|planning|district|road|street|block|building|site|parcel|type|code|desc|address)/.test(name)) score += 3;
+  if (/(mrt|lta|ura|nhb)/.test(name)) score += 2;
+  if (SYSTEM_FIELD_PATTERN.test(name)) score -= 5;
+  return score;
+}
+
+function rankField(field) {
+  return fieldKeywordScore(field.name)
+    + (field.labelEligible ? 4 : 0)
+    + (field.dissolveEligible ? 2 : 0)
+    + Math.min(field.completeness, 1) * 2
+    - Math.min(field.averageLength / 80, 1.5);
+}
+
+function buildFieldCatalog(features) {
+  const featureCount = features.length;
+  const stats = new Map();
+
+  features.forEach((feature) => {
+    const props = feature.properties || {};
+    Object.entries(props).forEach(([key, value]) => {
+      if (!stats.has(key)) {
+        stats.set(key, {
+          name: key,
+          nonNullCount: 0,
+          stringCount: 0,
+          numberCount: 0,
+          booleanCount: 0,
+          otherCount: 0,
+          totalLength: 0,
+          maxLength: 0,
+          uniqueValues: new Set(),
+          sampleValues: [],
+        });
+      }
+      const field = stats.get(key);
+      const kind = classifyPropertyValue(value);
+      if (kind === 'empty') return;
+
+      field.nonNullCount += 1;
+      if (kind === 'string') {
+        field.stringCount += 1;
+        field.totalLength += value.length;
+        field.maxLength = Math.max(field.maxLength, value.length);
+      } else if (kind === 'number') {
+        field.numberCount += 1;
+        field.totalLength += String(value).length;
+        field.maxLength = Math.max(field.maxLength, String(value).length);
+      } else if (kind === 'boolean') {
+        field.booleanCount += 1;
+        field.totalLength += String(value).length;
+        field.maxLength = Math.max(field.maxLength, String(value).length);
+      } else {
+        field.otherCount += 1;
+      }
+
+      if (field.uniqueValues.size < FIELD_SET_LIMIT) {
+        field.uniqueValues.add(String(value));
+      }
+      if (field.sampleValues.length < FIELD_SAMPLE_LIMIT) {
+        const sample = String(value);
+        if (!field.sampleValues.includes(sample)) {
+          field.sampleValues.push(sample);
+        }
+      }
+    });
+  });
+
+  const fieldCatalog = [...stats.values()].map((field) => {
+    const scalarCount = field.stringCount + field.numberCount + field.booleanCount;
+    const dominantType = field.stringCount >= field.numberCount && field.stringCount >= field.booleanCount
+      ? 'string'
+      : field.numberCount >= field.booleanCount
+        ? 'number'
+        : 'boolean';
+    const completeness = featureCount ? field.nonNullCount / featureCount : 0;
+    const averageLength = scalarCount ? field.totalLength / scalarCount : 0;
+    const uniqueCount = field.uniqueValues.size;
+    const systemLike = SYSTEM_FIELD_PATTERN.test(field.name);
+    const keywordScore = fieldKeywordScore(field.name);
+
+    const labelEligible = scalarCount > 0
+      && field.otherCount === 0
+      && completeness >= 0.2
+      && averageLength > 0
+      && averageLength <= 80
+      && field.maxLength <= 120
+      && uniqueCount >= 2
+      && (dominantType === 'string' || dominantType === 'number')
+      && (!systemLike || keywordScore > 0);
+
+    const dissolveEligible = scalarCount > 0
+      && field.otherCount === 0
+      && completeness >= 0.2
+      && uniqueCount >= 1
+      && uniqueCount < featureCount
+      && uniqueCount <= Math.min(200, Math.max(12, Math.round(featureCount * 0.95)));
+
+    return {
+      name: field.name,
+      dominantType,
+      completeness: Number(completeness.toFixed(3)),
+      uniqueCount,
+      averageLength: Number(averageLength.toFixed(1)),
+      maxLength: field.maxLength,
+      sampleValues: field.sampleValues,
+      labelEligible,
+      dissolveEligible,
+      systemLike,
+      score: rankField({
+        name: field.name,
+        completeness,
+        averageLength,
+        labelEligible,
+        dissolveEligible,
+      }),
+    };
+  }).sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+
+  return {
+    fieldCatalog,
+    fieldOptions: {
+      all: fieldCatalog.map((field) => field.name),
+      label: fieldCatalog.filter((field) => field.labelEligible).map((field) => field.name),
+      dissolve: fieldCatalog.filter((field) => field.dissolveEligible).map((field) => field.name),
+      summary: fieldCatalog
+        .filter((field) => field.dominantType !== 'other' && !field.systemLike)
+        .slice(0, 8)
+        .map((field) => field.name),
+    },
+  };
+}
+
+export function selectFeatureCollectionFields(featureCollection, keepFields = []) {
+  const allowed = new Set((keepFields || []).filter(Boolean));
+  return {
+    type: 'FeatureCollection',
+    features: (featureCollection?.features || []).map((feature) => ({
+      type: 'Feature',
+      id: feature.id,
+      properties: Object.fromEntries(
+        Object.entries(feature.properties || {}).filter(([key]) => allowed.has(key))
+      ),
+      geometry: feature.geometry,
+    })),
+  };
+}
+
 export function normalizeSingaporeGeoJson(input, fileName = 'Uploaded GeoJSON') {
   const featureCollection = normalizeToFeatureCollection(input);
   const sourceCrs = detectSourceCRS(featureCollection, parseExplicitCRS(input?.crs));
@@ -253,6 +416,8 @@ export function normalizeSingaporeGeoJson(input, fileName = 'Uploaded GeoJSON') 
     throw new Error('The uploaded GeoJSON did not produce any valid Singapore coordinates.');
   }
 
+  const { fieldCatalog, fieldOptions } = buildFieldCatalog(features);
+
   return {
     data: {
       type: 'FeatureCollection',
@@ -271,6 +436,8 @@ export function normalizeSingaporeGeoJson(input, fileName = 'Uploaded GeoJSON') 
         : 'Source CRS: EPSG:4326 (WGS84 longitude/latitude)',
       discardedCoordinateCount: stats.discardedCoordinateCount,
       discardedFeatureCount: stats.discardedFeatureCount,
+      fieldCatalog,
+      fieldOptions,
     },
   };
 }

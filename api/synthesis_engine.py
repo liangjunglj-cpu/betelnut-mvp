@@ -43,7 +43,7 @@ SUPPORTED_OPERATIONS = [
         "requiresTarget": True,
         "params": [
             {"id": "source_measure", "label": "Source Measure", "type": "select", "default": "boundary", "options": ["boundary", "centroid", "geometry"]},
-            {"id": "target_label_field", "label": "Target Label Field", "type": "field-select", "default": "", "fieldSource": "target", "allowEmpty": True, "emptyLabel": "No nearest target label"},
+            {"id": "target_label_field", "label": "Target Label Field", "type": "field-select", "default": "", "fieldSource": "target", "fieldPurpose": "label", "allowEmpty": True, "emptyLabel": "No nearest target label"},
             {"id": "distance_field", "label": "Distance Field", "type": "select", "default": "distance_m", "options": DISTANCE_FIELD_OPTIONS},
             {"id": "class_count", "label": "Class Count", "type": "number", "default": 5},
         ],
@@ -96,7 +96,7 @@ SUPPORTED_OPERATIONS = [
         "description": "Merge features by a shared attribute field.",
         "requiresTarget": False,
         "params": [
-            {"id": "field", "label": "Dissolve Field", "type": "field-select", "default": "", "fieldSource": "source"},
+            {"id": "field", "label": "Dissolve Field", "type": "field-select", "default": "", "fieldSource": "source", "fieldPurpose": "dissolve"},
         ],
     },
     {

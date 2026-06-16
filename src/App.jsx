@@ -8,7 +8,7 @@ import { captureViewport, buildRenderPrompt, requestAIRender } from './RenderCap
 import Gumball from './Gumball';
 import MapCanvas from './MapCanvas';
 import LandingPage from './LandingPage';
-import { normalizeSingaporeGeoJson } from './geojsonUtils';
+import { normalizeSingaporeGeoJson, selectFeatureCollectionFields } from './geojsonUtils';
 import { defaultLayerStyle } from './synthesisTheme';
 
 // Initial view state over Singapore (Orchard Road area)
@@ -22,11 +22,12 @@ const INITIAL_VIEW_STATE = {
 
 const DISTANCE_FIELD_OPTIONS = ['distance_m', 'nearest_distance_m', 'distance_to_target_m', 'mrt_distance_m'];
 const COUNT_FIELD_OPTIONS = ['feature_count', 'count_within', 'matches_count', 'points_count'];
+const MAX_SYNTHESIS_REQUEST_BYTES = 4_000_000;
 
 const FALLBACK_SYNTHESIS_OPERATIONS = [
   { id: 'nearest_distance', label: 'Nearest Distance', description: 'Measure nearest distance in EPSG:3414.', requiresTarget: true, params: [
     { id: 'source_measure', label: 'Source Measure', type: 'select', default: 'boundary', options: ['boundary', 'centroid', 'geometry'] },
-    { id: 'target_label_field', label: 'Target Label Field', type: 'field-select', default: '', fieldSource: 'target', allowEmpty: true, emptyLabel: 'No nearest target label' },
+    { id: 'target_label_field', label: 'Target Label Field', type: 'field-select', default: '', fieldSource: 'target', fieldPurpose: 'label', allowEmpty: true, emptyLabel: 'No nearest target label' },
     { id: 'distance_field', label: 'Distance Field', type: 'select', default: 'distance_m', options: DISTANCE_FIELD_OPTIONS },
     { id: 'class_count', label: 'Class Count', type: 'number', default: 5 },
   ] },
@@ -43,7 +44,7 @@ const FALLBACK_SYNTHESIS_OPERATIONS = [
   { id: 'intersection', label: 'Intersection', description: 'Intersect source with target.', requiresTarget: true, params: [] },
   { id: 'difference', label: 'Difference', description: 'Subtract target from source.', requiresTarget: true, params: [] },
   { id: 'dissolve', label: 'Dissolve', description: 'Dissolve by a shared field.', requiresTarget: false, params: [
-    { id: 'field', label: 'Dissolve Field', type: 'field-select', default: '', fieldSource: 'source' },
+    { id: 'field', label: 'Dissolve Field', type: 'field-select', default: '', fieldSource: 'source', fieldPurpose: 'dissolve' },
   ] },
   { id: 'centroid', label: 'Centroids', description: 'Generate centroid points from source geometry.', requiresTarget: false, params: [] },
 ];
@@ -63,6 +64,51 @@ async function readApiPayload(response) {
 
 function apiErrorMessage(payload, fallbackMessage) {
   return payload?.detail || payload?.message || payload?.error || fallbackMessage;
+}
+
+function sampleLayerFields(layer, limit = 8) {
+  if (!layer?.data?.features?.length) return [];
+  const fields = new Set();
+  layer.data.features.slice(0, 8).forEach((feature) => {
+    Object.keys(feature.properties || {}).forEach((key) => {
+      if (fields.size < limit) fields.add(key);
+    });
+  });
+  return [...fields];
+}
+
+function metaFieldOptions(layer, purpose = 'all') {
+  const options = layer?.meta?.fieldOptions?.[purpose];
+  if (Array.isArray(options) && options.length) return options;
+  return sampleLayerFields(layer);
+}
+
+function uniqueFields(...groups) {
+  return [...new Set(groups.flat().filter(Boolean))];
+}
+
+function buildSynthesisLayerPayload(layer, operation, params, role) {
+  if (!layer) return null;
+
+  const summaryFields = metaFieldOptions(layer, 'summary').slice(0, 8);
+  const fieldsToKeep = [...summaryFields];
+
+  if (role === 'source' && operation === 'dissolve' && params?.field) {
+    fieldsToKeep.push(params.field);
+  }
+
+  if (role === 'target' && operation === 'nearest_distance' && params?.target_label_field) {
+    fieldsToKeep.push(params.target_label_field);
+  }
+
+  const selectedFields = uniqueFields(fieldsToKeep);
+
+  return {
+    name: layer.meta.fileName,
+    data: selectedFields.length
+      ? selectFeatureCollectionFields(layer.data, selectedFields)
+      : selectFeatureCollectionFields(layer.data, []),
+  };
 }
 
 function inferLayerRole(geometryTypes, kind = 'upload') {
@@ -428,15 +474,21 @@ export default function App() {
     setSynthesisBusy(true);
     setSynthesisError('');
     try {
+      const requestBody = {
+        source_layer: buildSynthesisLayerPayload(sourceLayer, operation, params, 'source'),
+        target_layer: targetLayer ? buildSynthesisLayerPayload(targetLayer, operation, params, 'target') : null,
+        operation,
+        params,
+      };
+      const requestSize = new TextEncoder().encode(JSON.stringify(requestBody)).length;
+      if (requestSize > MAX_SYNTHESIS_REQUEST_BYTES) {
+        throw new Error('The selected source and target layers are still too large for a serverless synthesis request. Try a smaller subset, clip the layer first, or split the GeoJSON into lighter files.');
+      }
+
       const res = await fetch('/api/synthesis/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          source_layer: { name: sourceLayer.meta.fileName, data: sourceLayer.data },
-          target_layer: targetLayer ? { name: targetLayer.meta.fileName, data: targetLayer.data } : null,
-          operation,
-          params,
-        }),
+        body: JSON.stringify(requestBody),
       });
       const payload = await readApiPayload(res);
       if (!res.ok) {
