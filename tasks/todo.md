@@ -149,3 +149,18 @@
 - Added `/api/synthesis/catalog`, `/api/synthesis/run`, and `/api/synthesis/pyqgis-script` so Betelnut can expose a fixed operation catalog, run server-side synthesis, and hand users a paste-ready PyQGIS script without generating fresh GIS code each time.
 - Refactored the frontend into a multi-layer analysis workflow: multiple GeoJSON uploads, per-layer visibility/removal, operation selection, synthesis result layers, and PyQGIS copy-out in `src/GeoJsonOverlayPanel.jsx`.
 - Verified direct Python checks for nearest distance, count within, buffer, centroid, and clip outputs, verified API import/compile checks, and verified `npm run build` passed with the new synthesis UI.
+
+# Synthesis Reliability and UX
+
+- [x] Trace the synthesis JSON parse failure back to the backend response path
+- [x] Harden Vercel/serverless imports for synthesis modules
+- [x] Replace free-text synthesis field inputs with dropdown-driven selections where appropriate
+- [x] Expand the Learn More page with a clearer GeoJSON synthesis explanation
+- [x] Re-verify the updated build and API compile pass
+
+## Review
+
+- Updated `api/index.py` and `api/synthesis_engine.py` to support both package-relative and direct imports so the synthesis routes load reliably in Vercel serverless execution.
+- Updated `src/App.jsx` to parse synthesis API responses defensively, so a server-side plain-text error no longer surfaces as `Unexpected token ... is not valid JSON`.
+- Updated `src/GeoJsonOverlayPanel.jsx` so target label fields and dissolve/source attribute fields are driven from detected layer attributes, and distance/count output field names use controlled dropdown options.
+- Expanded `src/LandingPage.jsx` with a dedicated explanation of how Betelnut normalizes uploaded GeoJSON, standardizes metric operations to EPSG:3414, and returns styled synthesis layers plus PyQGIS templates.

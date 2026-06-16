@@ -19,6 +19,10 @@ const CAPABILITIES = [
     title: 'The Sandbox Workstation',
     desc: 'A map-first 3D environment. Drop your Revit, Rhino, or SketchUp models directly onto our geospatial twin to validate contextual fit in seconds.',
   },
+  {
+    title: 'Singapore GeoJSON Synthesis',
+    desc: 'Upload multiple GeoJSON layers, normalize them to a Singapore planning workflow, and run common spatial operations without hand-writing QGIS scripts every time.',
+  },
 ];
 
 // --- Abstract Singapore heightmap rendered on canvas ---
@@ -470,7 +474,7 @@ export default function LandingPage({ onEnter }) {
               {CAPABILITIES.map((cap, i) => (
                 <div
                   key={i}
-                  style={{ padding: '1.5rem', background: 'rgba(255,255,255,0.015)', borderBottom: i < 2 ? '1px solid rgba(255,255,255,0.08)' : 'none' }}
+                  style={{ padding: '1.5rem', background: 'rgba(255,255,255,0.015)' }}
                 >
                   <h3 className="font-sans" style={{ fontSize: '0.7rem', fontWeight: 600, letterSpacing: '0.1em', color: 'rgba(255,255,255,0.7)', marginBottom: '0.6rem', marginTop: 0 }}>
                     {cap.title}
@@ -480,6 +484,24 @@ export default function LandingPage({ onEnter }) {
                   </p>
                 </div>
               ))}
+            </div>
+
+            <p className="font-sans" style={{ fontSize: '0.6rem', letterSpacing: '0.4em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.25)', marginBottom: '1.5rem' }}>
+              HOW GEOJSON SYNTHESIS WORKS
+            </p>
+            <div style={{ border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.015)', padding: '1.75rem', marginBottom: '3rem' }}>
+              <p className="font-sans" style={{ fontSize: '0.8rem', lineHeight: 2, color: 'rgba(255,255,255,0.45)', margin: '0 0 1rem 0' }}>
+                Betelnut&apos;s synthesis workflow is designed for Singapore planning studies. You can upload multiple GeoJSON layers, use one as a source layer and another as a target layer, then run common spatial operations directly in the browser.
+              </p>
+              <p className="font-sans" style={{ fontSize: '0.8rem', lineHeight: 2, color: 'rgba(255,255,255,0.45)', margin: '0 0 1rem 0' }}>
+                Each file is checked on import and normalized for map display. If the file is already in WGS84, Betelnut keeps it coherent for viewing. If it comes from Singapore&apos;s SVY21 workflow, metric calculations are standardized to EPSG:3414 before any buffer, distance, count, clip, difference, intersection, dissolve, or centroid step is run.
+              </p>
+              <p className="font-sans" style={{ fontSize: '0.8rem', lineHeight: 2, color: 'rgba(255,255,255,0.45)', margin: '0 0 1rem 0' }}>
+                The result is returned as a new styled layer inside the same map, using a fixed Warm Editorial palette so analysis outputs read consistently instead of looking like default GIS exports. For studio workflows, Betelnut can also generate a matching PyQGIS template so the same operation can be reproduced inside QGIS without regenerating code from scratch.
+              </p>
+              <p className="font-sans" style={{ fontSize: '0.75rem', lineHeight: 1.9, color: 'rgba(255,255,255,0.3)', margin: 0 }}>
+                In practice, this means you can compare subzones to MRT access, count features within planning parcels, buffer corridors, or clip overlays for presentation-ready studies while keeping the coordinate system and styling rules consistent across the whole project.
+              </p>
             </div>
 
             <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '1.5rem', marginBottom: '2.5rem' }}>

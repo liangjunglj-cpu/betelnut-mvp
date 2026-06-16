@@ -20,16 +20,19 @@ const INITIAL_VIEW_STATE = {
   bearing: 0
 };
 
+const DISTANCE_FIELD_OPTIONS = ['distance_m', 'nearest_distance_m', 'distance_to_target_m', 'mrt_distance_m'];
+const COUNT_FIELD_OPTIONS = ['feature_count', 'count_within', 'matches_count', 'points_count'];
+
 const FALLBACK_SYNTHESIS_OPERATIONS = [
   { id: 'nearest_distance', label: 'Nearest Distance', description: 'Measure nearest distance in EPSG:3414.', requiresTarget: true, params: [
     { id: 'source_measure', label: 'Source Measure', type: 'select', default: 'boundary', options: ['boundary', 'centroid', 'geometry'] },
-    { id: 'target_label_field', label: 'Target Label Field', type: 'text', default: '' },
-    { id: 'distance_field', label: 'Distance Field', type: 'text', default: 'distance_m' },
+    { id: 'target_label_field', label: 'Target Label Field', type: 'field-select', default: '', fieldSource: 'target', allowEmpty: true, emptyLabel: 'No nearest target label' },
+    { id: 'distance_field', label: 'Distance Field', type: 'select', default: 'distance_m', options: DISTANCE_FIELD_OPTIONS },
     { id: 'class_count', label: 'Class Count', type: 'number', default: 5 },
   ] },
   { id: 'count_within', label: 'Count Within Polygon', description: 'Count how many target features fall within each source polygon.', requiresTarget: true, params: [
     { id: 'predicate', label: 'Predicate', type: 'select', default: 'intersects', options: ['intersects', 'within', 'contains', 'touches', 'overlaps'] },
-    { id: 'count_field', label: 'Count Field', type: 'text', default: 'feature_count' },
+    { id: 'count_field', label: 'Count Field', type: 'select', default: 'feature_count', options: COUNT_FIELD_OPTIONS },
     { id: 'class_count', label: 'Class Count', type: 'number', default: 5 },
   ] },
   { id: 'buffer', label: 'Buffer', description: 'Create a metric buffer around source features.', requiresTarget: false, params: [
@@ -40,10 +43,27 @@ const FALLBACK_SYNTHESIS_OPERATIONS = [
   { id: 'intersection', label: 'Intersection', description: 'Intersect source with target.', requiresTarget: true, params: [] },
   { id: 'difference', label: 'Difference', description: 'Subtract target from source.', requiresTarget: true, params: [] },
   { id: 'dissolve', label: 'Dissolve', description: 'Dissolve by a shared field.', requiresTarget: false, params: [
-    { id: 'field', label: 'Dissolve Field', type: 'text', default: '' },
+    { id: 'field', label: 'Dissolve Field', type: 'field-select', default: '', fieldSource: 'source' },
   ] },
   { id: 'centroid', label: 'Centroids', description: 'Generate centroid points from source geometry.', requiresTarget: false, params: [] },
 ];
+
+async function readApiPayload(response) {
+  const text = await response.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {
+      detail: text.trim() || `Request failed with status ${response.status}.`,
+      _nonJson: true,
+    };
+  }
+}
+
+function apiErrorMessage(payload, fallbackMessage) {
+  return payload?.detail || payload?.message || payload?.error || fallbackMessage;
+}
 
 function inferLayerRole(geometryTypes, kind = 'upload') {
   if (kind === 'analysis' && geometryTypes.every((type) => type.includes('Point'))) return 'centroid';
@@ -233,7 +253,13 @@ export default function App() {
 
   useEffect(() => {
     fetch('/api/synthesis/catalog')
-      .then((res) => res.ok ? res.json() : Promise.reject(new Error(`Synthesis catalog failed with status ${res.status}`)))
+      .then(async (res) => {
+        const payload = await readApiPayload(res);
+        if (!res.ok) {
+          throw new Error(apiErrorMessage(payload, `Synthesis catalog failed with status ${res.status}.`));
+        }
+        return payload;
+      })
       .then((data) => {
         if (data?.status === 'success') {
           setSynthesisCatalog({
@@ -412,9 +438,9 @@ export default function App() {
           params,
         }),
       });
-      const payload = await res.json();
+      const payload = await readApiPayload(res);
       if (!res.ok) {
-        throw new Error(payload.detail || 'Synthesis failed.');
+        throw new Error(apiErrorMessage(payload, 'Synthesis failed.'));
       }
 
       const resultLayer = buildLayerRecord({
@@ -452,9 +478,9 @@ export default function App() {
           params,
         }),
       });
-      const payload = await res.json();
+      const payload = await readApiPayload(res);
       if (!res.ok) {
-        throw new Error(payload.detail || 'Could not generate the PyQGIS template.');
+        throw new Error(apiErrorMessage(payload, 'Could not generate the PyQGIS template.'));
       }
       setPyqgisScript(payload.script || '');
     } catch (error) {

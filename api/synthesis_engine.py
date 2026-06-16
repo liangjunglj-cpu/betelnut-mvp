@@ -9,7 +9,10 @@ from shapely.geometry import GeometryCollection, LineString, MultiLineString, Mu
 from shapely.ops import transform as shapely_transform, unary_union
 from shapely.strtree import STRtree
 
-from synthesis_theme import EPSG_3414, EPSG_4326, THEME, resolve_style
+try:
+    from .synthesis_theme import EPSG_3414, EPSG_4326, THEME, resolve_style
+except ImportError:
+    from synthesis_theme import EPSG_3414, EPSG_4326, THEME, resolve_style
 
 SINGAPORE_BOUNDS = {
     "west": 103.55,
@@ -17,6 +20,20 @@ SINGAPORE_BOUNDS = {
     "south": 1.15,
     "north": 1.5,
 }
+
+DISTANCE_FIELD_OPTIONS = [
+    "distance_m",
+    "nearest_distance_m",
+    "distance_to_target_m",
+    "mrt_distance_m",
+]
+
+COUNT_FIELD_OPTIONS = [
+    "feature_count",
+    "count_within",
+    "matches_count",
+    "points_count",
+]
 
 SUPPORTED_OPERATIONS = [
     {
@@ -26,8 +43,8 @@ SUPPORTED_OPERATIONS = [
         "requiresTarget": True,
         "params": [
             {"id": "source_measure", "label": "Source Measure", "type": "select", "default": "boundary", "options": ["boundary", "centroid", "geometry"]},
-            {"id": "target_label_field", "label": "Target Label Field", "type": "text", "default": ""},
-            {"id": "distance_field", "label": "Distance Field", "type": "text", "default": "distance_m"},
+            {"id": "target_label_field", "label": "Target Label Field", "type": "field-select", "default": "", "fieldSource": "target", "allowEmpty": True, "emptyLabel": "No nearest target label"},
+            {"id": "distance_field", "label": "Distance Field", "type": "select", "default": "distance_m", "options": DISTANCE_FIELD_OPTIONS},
             {"id": "class_count", "label": "Class Count", "type": "number", "default": 5},
         ],
     },
@@ -38,7 +55,7 @@ SUPPORTED_OPERATIONS = [
         "requiresTarget": True,
         "params": [
             {"id": "predicate", "label": "Predicate", "type": "select", "default": "intersects", "options": ["intersects", "within", "contains", "touches", "overlaps"]},
-            {"id": "count_field", "label": "Count Field", "type": "text", "default": "feature_count"},
+            {"id": "count_field", "label": "Count Field", "type": "select", "default": "feature_count", "options": COUNT_FIELD_OPTIONS},
             {"id": "class_count", "label": "Class Count", "type": "number", "default": 5},
         ],
     },
@@ -79,7 +96,7 @@ SUPPORTED_OPERATIONS = [
         "description": "Merge features by a shared attribute field.",
         "requiresTarget": False,
         "params": [
-            {"id": "field", "label": "Dissolve Field", "type": "text", "default": ""},
+            {"id": "field", "label": "Dissolve Field", "type": "field-select", "default": "", "fieldSource": "source"},
         ],
     },
     {

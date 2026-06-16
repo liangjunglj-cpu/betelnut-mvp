@@ -6,8 +6,13 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from synthesis_engine import SUPPORTED_OPERATIONS, qgis_template, run_synthesis
-from synthesis_theme import theme_payload
+
+try:
+    from .synthesis_engine import SUPPORTED_OPERATIONS, qgis_template, run_synthesis
+    from .synthesis_theme import theme_payload
+except ImportError:
+    from synthesis_engine import SUPPORTED_OPERATIONS, qgis_template, run_synthesis
+    from synthesis_theme import theme_payload
 
 # 1. Initialize FastAPI App
 app = FastAPI(

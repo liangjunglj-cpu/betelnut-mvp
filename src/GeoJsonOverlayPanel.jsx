@@ -20,6 +20,16 @@ function featureFieldHints(layer) {
   return [...fields].slice(0, 8);
 }
 
+function resolveFieldOptions(param, sourceHints, targetHints) {
+  if (param.type !== 'field-select') return [];
+  const hints = param.fieldSource === 'target' ? targetHints : sourceHints;
+  const options = hints.map((field) => ({ value: field, label: field }));
+  if (param.allowEmpty) {
+    options.unshift({ value: '', label: param.emptyLabel || 'None' });
+  }
+  return options;
+}
+
 export default function GeoJsonOverlayPanel({
   uploadedLayers,
   selectedFeature,
@@ -119,6 +129,34 @@ export default function GeoJsonOverlayPanel({
   const featureProperties = selectedFeature?.properties
     ? Object.entries(selectedFeature.properties).slice(0, 12)
     : [];
+
+  useEffect(() => {
+    if (!selectedOperation) return;
+    setAnalysisState((prev) => {
+      const nextParams = { ...prev.params };
+      let changed = false;
+
+      (selectedOperation.params || []).forEach((param) => {
+        if (param.type !== 'field-select') return;
+        const options = resolveFieldOptions(param, sourceHints, targetHints);
+        const allowedValues = new Set(options.map((option) => option.value));
+        const currentValue = nextParams[param.id] ?? param.default ?? '';
+        if (!allowedValues.size) {
+          if (currentValue !== '') {
+            nextParams[param.id] = '';
+            changed = true;
+          }
+          return;
+        }
+        if (!allowedValues.has(currentValue)) {
+          nextParams[param.id] = options[0]?.value ?? '';
+          changed = true;
+        }
+      });
+
+      return changed ? { ...prev, params: nextParams } : prev;
+    });
+  }, [selectedOperation, sourceHints, targetHints]);
 
   return (
     <div className="mt-4 pt-4 border-t border-gray-200">
@@ -270,7 +308,22 @@ export default function GeoJsonOverlayPanel({
           {(selectedOperation.params || []).map((param) => (
             <label key={param.id} className="block">
               <span className="text-[10px] uppercase tracking-wider text-gray-500">{param.label}</span>
-              {param.type === 'select' ? (
+              {param.type === 'field-select' ? (
+                <select
+                  value={analysisState.params?.[param.id] ?? param.default ?? ''}
+                  onChange={(event) => updateParam(param.id, event.target.value, 'text')}
+                  className="mt-1 w-full border border-gray-300 bg-white px-3 py-2 text-sm"
+                  disabled={!resolveFieldOptions(param, sourceHints, targetHints).length}
+                >
+                  {resolveFieldOptions(param, sourceHints, targetHints).length ? (
+                    resolveFieldOptions(param, sourceHints, targetHints).map((option) => (
+                      <option key={`${param.id}-${option.value || 'empty'}`} value={option.value}>{option.label}</option>
+                    ))
+                  ) : (
+                    <option value="">No fields available</option>
+                  )}
+                </select>
+              ) : param.type === 'select' ? (
                 <select
                   value={analysisState.params?.[param.id] ?? param.default}
                   onChange={(event) => updateParam(param.id, event.target.value, param.type)}
@@ -297,9 +350,16 @@ export default function GeoJsonOverlayPanel({
                   className="mt-1 w-full border border-gray-300 bg-white px-3 py-2 text-sm"
                 />
               )}
-              {param.id.includes('field') && (sourceHints.length || targetHints.length) && (
+              {param.type !== 'field-select' && param.id.includes('field') && (sourceHints.length || targetHints.length) && (
                 <p className="mt-1 text-[11px] text-gray-400">
                   Suggested fields: {[...new Set([...sourceHints, ...targetHints])].join(', ') || 'No sample attributes found'}
+                </p>
+              )}
+              {param.type === 'field-select' && (
+                <p className="mt-1 text-[11px] text-gray-400">
+                  {param.fieldSource === 'target'
+                    ? `Pulled from target layer attributes: ${targetHints.join(', ') || 'No sample attributes found'}`
+                    : `Pulled from source layer attributes: ${sourceHints.join(', ') || 'No sample attributes found'}`}
                 </p>
               )}
             </label>
