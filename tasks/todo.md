@@ -135,3 +135,9 @@
 - Updated the upload copy to describe the dual-CRS support more accurately for Singapore datasets.
 - Verified `MasterPlan2014RailStation.geojson` now loads as 208 polygon features with detected source CRS `EPSG:4326`, and a synthetic explicit `EPSG:3414` polygon still transforms back into the correct Singapore footprint.
 - Verified `npm run build` passes after the CRS detection update.
+
+## Overlay Interaction Recovery
+
+- Moved the uploaded GeoJSON layer below the core heritage layers so URA and historic-site features remain clickable when overlays overlap.
+- Added deck-level background click handling so clicking empty map space clears the current uploaded-feature selection instead of leaving the interface stuck on it.
+- Consolidated the left layer panel into one scrollable region so the GeoJSON upload panel no longer traps the rest of the layer controls off-screen.

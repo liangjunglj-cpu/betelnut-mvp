@@ -23,7 +23,7 @@ const lightingEffect = new LightingEffect({ ambientLight, dirLight });
 const MapCanvas = React.memo(({
   viewState, setViewState, activeLayers, uraData, historicSitesData,
   trafficData, uploadedGeoJsonData, placedModels, setPlacedModels, selectedModelId,
-  setSelectedBuilding, setSelectedGeoJsonFeature, selectedBuilding, isPlacing, handleMapClick, deckRef
+  setSelectedBuilding, setSelectedGeoJsonFeature, selectedBuilding, isPlacing, handleDeckClick, deckRef
 }) => {
   const [time, setTime] = useState(0);
 
@@ -203,22 +203,22 @@ const MapCanvas = React.memo(({
       initialViewState={viewState}
       onViewStateChange={({ viewState }) => setViewState(viewState)}
       controller={!isPlacing}
-      onClick={isPlacing ? handleMapClick : undefined}
       getCursor={() => isPlacing ? 'crosshair' : 'grab'}
       useDevicePixels={window.devicePixelRatio > 1 ? 1.5 : true}
       _glOptions={{ preserveDrawingBuffer: true }}
       layers={[
         cartoBasemapLayer,
         google3DTilesLayer,
+        uploadedGeoJsonLayer,
         uraLayer,
         historicSitesLayer,
-        uploadedGeoJsonLayer,
         footTrafficLayer,
         vehicleTrafficLayer,
         ...sandboxLayers
       ].filter(Boolean)}
       parameters={{ clearColor: [0.95, 0.95, 0.95, 1] }}
       effects={[lightingEffect]}
+      onClick={handleDeckClick}
     />
   );
 });

@@ -215,6 +215,18 @@ export default function App() {
     setActiveTab('sandbox');
   }, [isPlacing, pendingModelUrl, pendingModelName]);
 
+  const handleDeckClick = useCallback((info) => {
+    if (isPlacing) {
+      handleMapClick(info);
+      return;
+    }
+
+    if (!info?.object) {
+      setSelectedBuilding(null);
+      setSelectedGeoJsonFeature(null);
+    }
+  }, [handleMapClick, isPlacing]);
+
   // Handle AI render generation
   const handleGenerateRender = useCallback(async () => {
     setIsRendering(true);
@@ -386,7 +398,7 @@ export default function App() {
         setSelectedGeoJsonFeature={setSelectedGeoJsonFeature}
         selectedBuilding={selectedBuilding}
         isPlacing={isPlacing}
-        handleMapClick={handleMapClick}
+        handleDeckClick={handleDeckClick}
         deckRef={deckRef}
       />
 
@@ -423,9 +435,8 @@ export default function App() {
           <h2 className="font-serif text-sm font-semibold uppercase tracking-widest text-black mb-4 flex items-center shrink-0">
             <Layers size={16} className="mr-2" /> Map Layers
           </h2>
-          
-          {/* Scrollable Categories Context */}
-          <div className="flex-1 overflow-y-auto pr-2" style={{ scrollbarWidth: 'thin' }}>
+
+          <div className="flex-1 overflow-y-auto pr-2 min-h-0" style={{ scrollbarWidth: 'thin' }}>
             <LayerCategory title="Basemaps" id="basemaps" openCategories={openCategories} toggleCategory={toggleCategory}>
               <Toggle label="Clean Vector Basemap" icon={<Map size={16} />} active={activeLayers.cartoBasemap} onClick={() => toggleLayer('cartoBasemap')} />
               <Toggle label="Google 3D Context" icon={<Layers size={16} />} active={activeLayers.google3D} onClick={() => toggleLayer('google3D')} />
@@ -447,28 +458,28 @@ export default function App() {
             <LayerCategory title="Tools" id="tools" openCategories={openCategories} toggleCategory={toggleCategory}>
               <Toggle label="Sandbox Mode" icon={<Box size={16} />} active={activeLayers.sandbox} onClick={() => toggleLayer('sandbox')} />
             </LayerCategory>
-          </div>
 
-          <GeoJsonOverlayPanel
-            overlayMeta={uploadedGeoJsonMeta}
-            selectedFeature={selectedGeoJsonFeature}
-            error={geoJsonUploadError}
-            active={activeLayers.geojsonOverlay}
-            onToggle={() => toggleLayer('geojsonOverlay')}
-            onUpload={handleGeoJsonUpload}
-            onClear={clearGeoJsonOverlay}
-          />
+            <GeoJsonOverlayPanel
+              overlayMeta={uploadedGeoJsonMeta}
+              selectedFeature={selectedGeoJsonFeature}
+              error={geoJsonUploadError}
+              active={activeLayers.geojsonOverlay}
+              onToggle={() => toggleLayer('geojsonOverlay')}
+              onUpload={handleGeoJsonUpload}
+              onClear={clearGeoJsonOverlay}
+            />
 
-          <div className="mt-4 pt-4 border-t border-gray-200 shrink-0">
-            <button
-              onClick={() => toggleLayer('sandbox')}
-              className={`w-full py-3 px-4 flex items-center justify-center font-bold text-xs uppercase tracking-widest transition-all border
-                ${activeLayers.sandbox ? 'bg-black text-white border-black' : 'bg-black text-white hover:bg-gray-800 border-black'}`}
-            >
-              <Box size={16} className="mr-2" />
-              {activeLayers.sandbox ? 'Exit Sandbox' : 'Enter Sandbox Mode'}
-            </button>
-            <p className="text-[10px] text-gray-400 mt-2 text-center">Drop 3D models onto the geospatial twin to validate contextual fit.</p>
+            <div className="mt-4 pt-4 border-t border-gray-200">
+              <button
+                onClick={() => toggleLayer('sandbox')}
+                className={`w-full py-3 px-4 flex items-center justify-center font-bold text-xs uppercase tracking-widest transition-all border
+                  ${activeLayers.sandbox ? 'bg-black text-white border-black' : 'bg-black text-white hover:bg-gray-800 border-black'}`}
+              >
+                <Box size={16} className="mr-2" />
+                {activeLayers.sandbox ? 'Exit Sandbox' : 'Enter Sandbox Mode'}
+              </button>
+              <p className="text-[10px] text-gray-400 mt-2 text-center">Drop 3D models onto the geospatial twin to validate contextual fit.</p>
+            </div>
           </div>
         </div>
       </div>
