@@ -39,6 +39,84 @@ function resolveFieldOptions(param, sourceLayer, targetLayer) {
   return options;
 }
 
+function geometryFamily(layer) {
+  const types = layer?.meta?.geometryTypes || [];
+  if (types.some((type) => type.includes('Polygon'))) return 'polygon';
+  if (types.some((type) => type.includes('Line'))) return 'line';
+  if (types.some((type) => type.includes('Point'))) return 'point';
+  return 'other';
+}
+
+function geometryRoleLabel(layer) {
+  const family = geometryFamily(layer);
+  if (family === 'polygon') return 'Area';
+  if (family === 'point') return 'Point';
+  if (family === 'line') return 'Line';
+  return 'Layer';
+}
+
+function layerOptionLabel(layer) {
+  return `${layer.meta.fileName} · ${geometryRoleLabel(layer)}`;
+}
+
+function compareFeatureCountDescending(left, right) {
+  return (right?.meta?.featureCount || 0) - (left?.meta?.featureCount || 0);
+}
+
+function compareFeatureCountAscending(left, right) {
+  return (left?.meta?.featureCount || 0) - (right?.meta?.featureCount || 0);
+}
+
+function suggestLayerPair(layers, operationId) {
+  const nonAnalysisLayers = layers.filter((layer) => layer.kind !== 'analysis');
+  const pool = nonAnalysisLayers.length ? nonAnalysisLayers : layers;
+  const ordered = [...pool].sort(compareFeatureCountDescending);
+  const fallbackSource = ordered[0] || null;
+  const fallbackTarget = ordered.find((layer) => layer.id !== fallbackSource?.id) || fallbackSource;
+
+  if (!fallbackSource) {
+    return { sourceLayerId: '', targetLayerId: '' };
+  }
+
+  if (operationId === 'nearest_distance' || operationId === 'count_within') {
+    const polygonSource = [...pool]
+      .filter((layer) => geometryFamily(layer) === 'polygon')
+      .sort(compareFeatureCountDescending)[0];
+    const lineSource = [...pool]
+      .filter((layer) => geometryFamily(layer) === 'line')
+      .sort(compareFeatureCountDescending)[0];
+    const source = polygonSource || lineSource || fallbackSource;
+    const pointTarget = [...pool]
+      .filter((layer) => layer.id !== source.id && geometryFamily(layer) === 'point')
+      .sort(compareFeatureCountAscending)[0];
+    const polygonTarget = [...pool]
+      .filter((layer) => layer.id !== source.id && geometryFamily(layer) === 'polygon')
+      .sort(compareFeatureCountAscending)[0];
+    const target = pointTarget || polygonTarget || fallbackTarget;
+    return {
+      sourceLayerId: source.id,
+      targetLayerId: target?.id || source.id,
+    };
+  }
+
+  if (operationId === 'clip' || operationId === 'intersection' || operationId === 'difference') {
+    const polygonLayers = [...pool]
+      .filter((layer) => geometryFamily(layer) === 'polygon')
+      .sort(compareFeatureCountDescending);
+    const source = polygonLayers[0] || fallbackSource;
+    const target = polygonLayers.find((layer) => layer.id !== source.id) || fallbackTarget;
+    return {
+      sourceLayerId: source.id,
+      targetLayerId: target?.id || source.id,
+    };
+  }
+
+  return {
+    sourceLayerId: fallbackSource.id,
+    targetLayerId: fallbackTarget?.id || fallbackSource.id,
+  };
+}
+
 export default function GeoJsonOverlayPanel({
   uploadedLayers,
   selectedFeature,
@@ -56,6 +134,7 @@ export default function GeoJsonOverlayPanel({
 }) {
   const inputRef = useRef(null);
   const [isDragging, setIsDragging] = useState(false);
+  const previousOperationRef = useRef('');
   const [analysisState, setAnalysisState] = useState({
     sourceLayerId: '',
     targetLayerId: '',
@@ -82,21 +161,40 @@ export default function GeoJsonOverlayPanel({
   }, [operations]);
 
   useEffect(() => {
-    if (!uploadedLayers.length) return;
-    setAnalysisState((prev) => ({
-      ...prev,
-      sourceLayerId: prev.sourceLayerId || uploadedLayers[0].id,
-      targetLayerId: prev.targetLayerId || uploadedLayers[1]?.id || uploadedLayers[0].id,
-    }));
-  }, [uploadedLayers]);
-
-  useEffect(() => {
     if (!selectedOperation) return;
     setAnalysisState((prev) => ({
       ...prev,
       params: buildDefaultParams(selectedOperation),
     }));
   }, [selectedOperation?.id]);
+
+  useEffect(() => {
+    if (!uploadedLayers.length || !selectedOperation) return;
+    const operationChanged = previousOperationRef.current !== selectedOperation.id;
+    previousOperationRef.current = selectedOperation.id;
+
+    setAnalysisState((prev) => {
+      const validLayerIds = new Set(uploadedLayers.map((layer) => layer.id));
+      const sourceValid = validLayerIds.has(prev.sourceLayerId);
+      const targetValid = validLayerIds.has(prev.targetLayerId);
+      const duplicatePairing = selectedOperation.requiresTarget
+        && uploadedLayers.length > 1
+        && prev.sourceLayerId
+        && prev.sourceLayerId === prev.targetLayerId;
+      if (!operationChanged && sourceValid && (!selectedOperation.requiresTarget || targetValid) && !duplicatePairing) {
+        return prev;
+      }
+
+      const suggested = suggestLayerPair(uploadedLayers, selectedOperation.id);
+      return {
+        ...prev,
+        sourceLayerId: suggested.sourceLayerId || prev.sourceLayerId || uploadedLayers[0].id,
+        targetLayerId: selectedOperation.requiresTarget
+          ? (suggested.targetLayerId || prev.targetLayerId || uploadedLayers[1]?.id || uploadedLayers[0].id)
+          : prev.targetLayerId,
+      };
+    });
+  }, [uploadedLayers, selectedOperation]);
 
   const handleDrop = useCallback((event) => {
     event.preventDefault();
@@ -140,6 +238,9 @@ export default function GeoJsonOverlayPanel({
   const featureProperties = selectedFeature?.properties
     ? Object.entries(selectedFeature.properties).slice(0, 12)
     : [];
+  const nearestDistanceHint = selectedOperation?.id === 'nearest_distance'
+    ? `Nearest distance reads from the source layer into the target layer. For subzone-to-MRT analysis, use the subzone area as Source and the MRT or station layer as Target.`
+    : '';
 
   useEffect(() => {
     if (!selectedOperation) return;
@@ -287,9 +388,12 @@ export default function GeoJsonOverlayPanel({
               className="mt-1 w-full border border-gray-300 bg-white px-3 py-2 text-sm"
             >
               {uploadedLayers.map((layer) => (
-                <option key={layer.id} value={layer.id}>{layer.meta.fileName}</option>
+                <option key={layer.id} value={layer.id}>{layerOptionLabel(layer)}</option>
               ))}
             </select>
+            {selectedOperation.id === 'nearest_distance' && (
+              <p className="mt-1 text-[11px] text-gray-400">Current source role: {geometryRoleLabel(activeSourceLayer)} layer to be classified.</p>
+            )}
           </label>
 
           <label className="block">
@@ -316,9 +420,12 @@ export default function GeoJsonOverlayPanel({
                 {uploadedLayers
                   .filter((layer) => layer.id !== analysisState.sourceLayerId || uploadedLayers.length === 1)
                   .map((layer) => (
-                    <option key={layer.id} value={layer.id}>{layer.meta.fileName}</option>
+                    <option key={layer.id} value={layer.id}>{layerOptionLabel(layer)}</option>
                   ))}
               </select>
+              {nearestDistanceHint && (
+                <p className="mt-1 text-[11px] text-gray-400">{nearestDistanceHint}</p>
+              )}
             </label>
           )}
 

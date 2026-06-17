@@ -386,6 +386,17 @@ def _measure_geometry(geometry, mode: str):
     return geometry
 
 
+def _layer_role_summary(layer: Dict[str, Any]) -> str:
+    geometry_types = layer.get("geometryTypes") or []
+    if any("Polygon" in geometry_type for geometry_type in geometry_types):
+        return "area"
+    if any("Line" in geometry_type for geometry_type in geometry_types):
+        return "line"
+    if any("Point" in geometry_type for geometry_type in geometry_types):
+        return "point"
+    return "layer"
+
+
 def run_synthesis(source_payload: Dict[str, Any], target_payload: Optional[Dict[str, Any]], operation: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     params = params or {}
     source_layer = _coerce_feature_collection(source_payload.get("name", "Source Layer"), source_payload["data"])
@@ -416,18 +427,25 @@ def run_synthesis(source_payload: Dict[str, Any], target_payload: Optional[Dict[
             result_features.append({**feature, "properties": properties})
 
         style = resolve_style("thematic_polygon")
-        choropleth = _classify_numeric_field(distances, distance_field, "Nearest distance (m)", class_count)
+        choropleth = _classify_numeric_field(
+            distances,
+            distance_field,
+            f"Nearest distance to {target_layer['name']} (m)",
+            class_count,
+        )
         if choropleth:
             style["choropleth"] = choropleth
         return _feature_collection_response(
             result_features,
-            layer_name=f"{source_layer['name']} · nearest distance",
+            layer_name=f"{source_layer['name']} · nearest distance to {target_layer['name']}",
             source_layers=[source_layer["name"], target_layer["name"]],
             style=style,
             analysis={
                 "operation": operation,
                 "metricCrs": EPSG_3414,
                 "sourceMeasure": measure_mode,
+                "sourceRole": _layer_role_summary(source_layer),
+                "targetRole": _layer_role_summary(target_layer),
             },
         )
 

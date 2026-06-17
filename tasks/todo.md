@@ -209,3 +209,18 @@
 - Updated `src/MapCanvas.jsx` so active analysis layers render with stronger emphasis and now expose a floating title card plus choropleth legend on the map itself.
 - Updated `src/GeoJsonOverlayPanel.jsx` so derived analysis layers are labeled as thematic results in the side panel instead of reading like ordinary uploaded files.
 - Verified `npm run build` passed after the visibility updates.
+
+# Nearest Distance Pairing
+
+- [x] Inspect why nearest-distance defaults are yielding all-zero results
+- [x] Make nearest-distance default to the correct source/target layer roles for subzone-style workflows
+- [x] Clarify the synthesis UI so the active layer pairing is less ambiguous
+- [x] Re-verify backend nearest-distance behavior and frontend build
+
+## Review
+
+- Confirmed the all-zero nearest-distance result was primarily caused by the synthesis UI defaulting to the first uploaded layer as the source, which made station layers get measured against enclosing subzone polygons instead of the other way around.
+- Updated `src/GeoJsonOverlayPanel.jsx` with operation-aware layer pairing so `nearest_distance` and `count_within` prefer polygon layers as the source to be classified and point layers as the target when available.
+- Added clearer layer labels and guidance text in the synthesis panel so users can see whether they are classifying an Area, Point, or Line layer before running analysis.
+- Updated `api/synthesis_engine.py` so nearest-distance output names and choropleth titles explicitly include the target layer, which makes the resulting thematic layer easier to interpret on the map.
+- Verified `python -m py_compile` passed for the synthesis backend files, and verified `npm run build` passed after the pairing fix.
