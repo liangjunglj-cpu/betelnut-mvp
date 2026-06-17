@@ -8,3 +8,5 @@
 - When adding a new map overlay control, verify both pointer priority on the map and scroll behavior in the side panel; an overlay that works visually can still trap clicks or make the rest of the interface hard to reach.
 - When adding new serverless API modules for Vercel, verify sibling imports work in both package-relative and direct execution contexts, and never assume frontend fetch failures will come back as JSON.
 - For serverless geospatial synthesis, `FUNCTION_PAYLOAD_TOO_LARGE` usually means the request is sending whole GeoJSON property tables, not that a particular chosen label field is invalid; slim payloads before fetch and pre-filter field choices semantically in the UI.
+- If Singapore GeoJSON synthesis is still too large after attribute slimming, compress the request body itself and round transport geometry precision slightly before giving up on the serverless path.
+- When a user says synthesis "ran" but the map does not look different, treat it as a presentation bug as much as a data bug; thematic outputs need map-side legend/title treatment and sometimes the source layer should be auto-muted or hidden so the new result can actually read.

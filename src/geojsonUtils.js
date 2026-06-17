@@ -371,8 +371,41 @@ export function selectFeatureCollectionFields(featureCollection, keepFields = []
       properties: Object.fromEntries(
         Object.entries(feature.properties || {}).filter(([key]) => allowed.has(key))
       ),
-      geometry: feature.geometry,
+      geometry: roundGeometryPrecision(feature.geometry),
     })),
+  };
+}
+
+function roundCoordinateValue(value, precision = 6) {
+  if (!Number.isFinite(value)) return value;
+  const factor = 10 ** precision;
+  return Math.round(value * factor) / factor;
+}
+
+function roundCoordinates(value, precision = 6) {
+  if (!Array.isArray(value)) return value;
+  if (
+    value.length >= 2 &&
+    typeof value[0] === 'number' &&
+    typeof value[1] === 'number'
+  ) {
+    return value.map((entry, index) => index < 2 ? roundCoordinateValue(entry, precision) : entry);
+  }
+  return value.map((entry) => roundCoordinates(entry, precision));
+}
+
+function roundGeometryPrecision(geometry, precision = 6) {
+  if (!geometry?.type) return geometry;
+  if (geometry.type === 'GeometryCollection') {
+    return {
+      ...geometry,
+      geometries: (geometry.geometries || []).map((entry) => roundGeometryPrecision(entry, precision)),
+    };
+  }
+  if (geometry.coordinates === undefined) return geometry;
+  return {
+    ...geometry,
+    coordinates: roundCoordinates(geometry.coordinates, precision),
   };
 }
 

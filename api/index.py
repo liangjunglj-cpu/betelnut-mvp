@@ -1,11 +1,13 @@
 import asyncio
+import gzip
+import json
 import math
 import random
 import requests
 from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 try:
     from .synthesis_engine import SUPPORTED_OPERATIONS, qgis_template, run_synthesis
@@ -531,18 +533,40 @@ async def get_synthesis_catalog():
     }
 
 
-@app.post("/api/synthesis/run")
-async def run_synthesis_endpoint(request: SynthesisRequest):
+def _decode_synthesis_request(payload_format: str, raw_body: bytes) -> Dict[str, Any]:
+    if payload_format == "gzip-json":
+        try:
+            return json.loads(gzip.decompress(raw_body).decode("utf-8"))
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Could not decode compressed synthesis request: {str(exc)}")
+
     try:
+        return json.loads(raw_body.decode("utf-8")) if raw_body else {}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Could not decode synthesis request JSON: {str(exc)}")
+
+
+@app.post("/api/synthesis/run")
+async def run_synthesis_endpoint(request: Request):
+    try:
+        payload = _decode_synthesis_request(
+            request.headers.get("x-betelnut-payload-format", "").strip().lower(),
+            await request.body(),
+        )
+        validated = SynthesisRequest.model_validate(payload)
         result = run_synthesis(
-            source_payload=request.source_layer.model_dump(),
-            target_payload=request.target_layer.model_dump() if request.target_layer else None,
-            operation=request.operation,
-            params=request.params,
+            source_payload=validated.source_layer.model_dump(),
+            target_payload=validated.target_layer.model_dump() if validated.target_layer else None,
+            operation=validated.operation,
+            params=validated.params,
         )
         return {"status": "success", **result}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid synthesis request: {str(exc)}")
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Synthesis Error: {str(exc)}")
 

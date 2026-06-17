@@ -111,6 +111,22 @@ function buildSynthesisLayerPayload(layer, operation, params, role) {
   };
 }
 
+function supportsGzipSynthesisTransport() {
+  return typeof CompressionStream !== 'undefined';
+}
+
+async function gzipSynthesisPayload(payload) {
+  const json = JSON.stringify(payload);
+  const input = new TextEncoder().encode(json);
+  const stream = new Blob([input]).stream().pipeThrough(new CompressionStream('gzip'));
+  const buffer = await new Response(stream).arrayBuffer();
+  return {
+    rawBytes: input.byteLength,
+    compressedBytes: buffer.byteLength,
+    body: buffer,
+  };
+}
+
 function inferLayerRole(geometryTypes, kind = 'upload') {
   if (kind === 'analysis' && geometryTypes.every((type) => type.includes('Point'))) return 'centroid';
   if (geometryTypes.every((type) => type.includes('Point'))) return 'point';
@@ -128,6 +144,23 @@ function buildLayerRecord({ data, meta, kind = 'upload', style, index = 0 }) {
     active: true,
     style: style || defaultLayerStyle(role, index),
   };
+}
+
+function geometryFamilies(geometryTypes = []) {
+  return new Set(
+    geometryTypes.map((type) => {
+      if (type.includes('Polygon')) return 'polygon';
+      if (type.includes('Line')) return 'line';
+      if (type.includes('Point')) return 'point';
+      return 'other';
+    })
+  );
+}
+
+function shouldHideSourceAfterSynthesis(sourceLayer, resultMeta) {
+  const sourceFamilies = geometryFamilies(sourceLayer?.meta?.geometryTypes || []);
+  const resultFamilies = geometryFamilies(resultMeta?.geometryTypes || []);
+  return sourceFamilies.has('polygon') && resultFamilies.has('polygon');
 }
 
 export default function App() {
@@ -480,16 +513,34 @@ export default function App() {
         operation,
         params,
       };
-      const requestSize = new TextEncoder().encode(JSON.stringify(requestBody)).length;
-      if (requestSize > MAX_SYNTHESIS_REQUEST_BYTES) {
-        throw new Error('The selected source and target layers are still too large for a serverless synthesis request. Try a smaller subset, clip the layer first, or split the GeoJSON into lighter files.');
-      }
+      let res;
+      if (supportsGzipSynthesisTransport()) {
+        const compressed = await gzipSynthesisPayload(requestBody);
+        if (compressed.compressedBytes > MAX_SYNTHESIS_REQUEST_BYTES) {
+          throw new Error('The selected source and target layers are still too large for a serverless synthesis request even after compression. Try a smaller subset, clip the layer first, or split the GeoJSON into lighter files.');
+        }
 
-      const res = await fetch('/api/synthesis/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody),
-      });
+        res = await fetch('/api/synthesis/run', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/octet-stream',
+            'X-Betelnut-Payload-Format': 'gzip-json',
+            'X-Betelnut-Raw-Bytes': String(compressed.rawBytes),
+          },
+          body: compressed.body,
+        });
+      } else {
+        const requestSize = new TextEncoder().encode(JSON.stringify(requestBody)).length;
+        if (requestSize > MAX_SYNTHESIS_REQUEST_BYTES) {
+          throw new Error('This browser cannot compress synthesis uploads, and the selected source and target layers are too large for an uncompressed serverless request. Try a smaller subset, clip the layer first, or split the GeoJSON into lighter files.');
+        }
+
+        res = await fetch('/api/synthesis/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody),
+        });
+      }
       const payload = await readApiPayload(res);
       if (!res.ok) {
         throw new Error(apiErrorMessage(payload, 'Synthesis failed.'));
@@ -502,7 +553,16 @@ export default function App() {
         style: payload.meta.style,
       });
 
-      setUploadedLayers((prev) => [...prev, resultLayer]);
+      setUploadedLayers((prev) => {
+        const hideSource = shouldHideSourceAfterSynthesis(sourceLayer, payload.meta);
+        const nextLayers = prev.map((layer) => {
+          if (hideSource && layer.id === sourceLayerId) {
+            return { ...layer, active: false };
+          }
+          return layer;
+        });
+        return [...nextLayers, resultLayer];
+      });
       setSelectedBuilding(null);
       setSelectedGeoJsonFeature(null);
       fitViewToBounds(payload.meta.bounds);

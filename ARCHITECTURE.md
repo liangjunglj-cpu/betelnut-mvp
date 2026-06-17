@@ -174,6 +174,7 @@ Betelnut now includes a deterministic map-synthesis workflow aimed at common arc
 3. **The Warm Editorial palette is shared across outputs.** Result layers and PyQGIS templates draw from the same role-based style system.
 4. **Field choices are semantically filtered before analysis.** Upload-time metadata identifies plausible label and dissolve fields so the UI exposes synthesis-friendly attribute options instead of every raw property.
 5. **Request bodies are intentionally slimmed for serverless limits.** The frontend sends geometry plus only summary fields and explicitly required attributes, rather than the full uploaded property tables.
+6. **Heavy synthesis requests are compressed in transit.** The browser rounds transport geometry precision, gzips the synthesis payload when supported, and the API accepts both plain JSON and compressed JSON so larger Singapore layers still fit within Vercel's serverless request budget.
 
 ### Current Fixed Operations
 
@@ -201,10 +202,11 @@ Betelnut now includes a deterministic map-synthesis workflow aimed at common arc
 ### Backend Flow
 
 1. `/api/synthesis/catalog` exposes the operation list and theme metadata.
-2. The frontend builds a reduced request body from uploaded layers, preserving geometry and only the small set of attributes needed for the requested operation.
-3. `/api/synthesis/run` validates the uploaded GeoJSON, coerces the work into EPSG:3414, and runs the requested operation with Shapely.
-4. The result is converted back to WGS84 GeoJSON for deck.gl rendering, with style metadata attached for the Warm Editorial palette.
-5. `/api/synthesis/pyqgis-script` emits a deterministic PyQGIS starter script matching the same CRS and palette conventions.
+2. The frontend builds a reduced request body from uploaded layers, preserving geometry and only the small set of attributes needed for the requested operation. For transport, geometry coordinates are rounded to a compact precision to keep request bodies smaller.
+3. On modern browsers, the frontend gzips the synthesis request body before POSTing it to `/api/synthesis/run`; older browsers fall back to plain JSON with an explicit size check.
+4. `/api/synthesis/run` accepts either plain JSON or Betelnut's gzipped JSON format, validates the uploaded GeoJSON, coerces the work into EPSG:3414, and runs the requested operation with Shapely.
+5. The result is converted back to WGS84 GeoJSON for deck.gl rendering, with style metadata attached for the Warm Editorial palette.
+6. `/api/synthesis/pyqgis-script` emits a deterministic PyQGIS starter script matching the same CRS and palette conventions.
 
 ---
 

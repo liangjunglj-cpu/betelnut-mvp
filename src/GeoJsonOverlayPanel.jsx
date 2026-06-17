@@ -258,6 +258,12 @@ export default function GeoJsonOverlayPanel({
                   {index === 0 ? ' Use these layers as source/target inputs below.' : ''}
                 </span>
               </div>
+
+              {layer.kind === 'analysis' && layer.style?.choropleth && (
+                <div className="text-[11px] text-[#7A1F12]">
+                  Thematic result: {layer.style.choropleth.title} using {layer.style.choropleth.method} classes.
+                </div>
+              )}
             </div>
           ))}
         </div>

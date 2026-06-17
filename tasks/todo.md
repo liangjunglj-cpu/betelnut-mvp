@@ -179,3 +179,33 @@
 - Updated `src/geojsonUtils.js` to compute field catalogs at upload time, including semantic label candidates, dissolve candidates, and preferred summary fields.
 - Updated `src/GeoJsonOverlayPanel.jsx` so the label and dissolve dropdowns only surface fields that pass those synthesis-oriented filters, instead of exposing every raw attribute name.
 - Updated `src/App.jsx` so synthesis requests now send geometry plus only a small set of summary fields and explicitly required attributes, with a preflight size check that explains when a layer still needs to be split or clipped.
+
+# Synthesis Transport Compression
+
+- [x] Confirm whether geometry payload size still exceeds the serverless limit after attribute slimming
+- [x] Add transport-safe geometry compaction for synthesis requests
+- [x] Add gzip request support between the browser and `/api/synthesis/run`
+- [x] Re-verify API compile and frontend build after the transport change
+
+## Review
+
+- Confirmed the remaining synthesis blocker was still request-body size from geometry-heavy layers, not an invalid target label field or regeneration issue.
+- Updated `src/geojsonUtils.js` so synthesis request payloads round transport geometry coordinates before POSTing, which reduces payload size without changing on-map display behavior.
+- Updated `src/App.jsx` so supported browsers gzip the synthesis request body before sending it to `/api/synthesis/run`, with a clearer fallback message for browsers that cannot compress uploads.
+- Updated `api/index.py` so the synthesis endpoint accepts both plain JSON and Betelnut's gzipped JSON transport format.
+- Verified `python -m py_compile` passed for the synthesis backend files, and verified `npm run build` passed outside the sandbox after the usual Windows `spawn EPERM` sandbox restriction blocked the first build attempt.
+
+# Synthesis Layer Visibility
+
+- [x] Inspect why successful synthesis results are not visually distinct on the map
+- [x] Make synthesis outputs read as a new thematic result layer rather than just another upload
+- [x] Add map-side legend/context for the active analysis result
+- [x] Re-verify build and summarize any remaining UX tradeoffs
+
+## Review
+
+- Confirmed the synthesis path was already returning a result layer, but the interface was not making that output legible as a finished thematic map product.
+- Updated `src/App.jsx` so when a synthesis result comes back with polygon geometry, the original source layer is auto-hidden to let the derived thematic layer read clearly while still leaving it available for manual re-toggle.
+- Updated `src/MapCanvas.jsx` so active analysis layers render with stronger emphasis and now expose a floating title card plus choropleth legend on the map itself.
+- Updated `src/GeoJsonOverlayPanel.jsx` so derived analysis layers are labeled as thematic results in the side panel instead of reading like ordinary uploaded files.
+- Verified `npm run build` passed after the visibility updates.

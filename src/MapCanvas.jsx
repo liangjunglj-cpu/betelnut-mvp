@@ -21,6 +21,28 @@ const dirLight = new DirectionalLight({
 });
 const lightingEffect = new LightingEffect({ ambientLight, dirLight });
 
+function summarizeAnalysisTitle(layer) {
+  const choropleth = layer?.style?.choropleth;
+  if (choropleth?.title) return choropleth.title;
+  return layer?.meta?.fileName || 'Analysis Layer';
+}
+
+function summarizeAnalysisSubtitle(layer) {
+  const method = layer?.style?.choropleth?.method;
+  const classCount = layer?.style?.choropleth?.breaks?.length;
+  if (method && classCount) {
+    return `${layer.meta.fileName} · ${method} ${classCount}`;
+  }
+  return layer?.meta?.analysis?.operation
+    ? `${layer.meta.fileName} · ${layer.meta.analysis.operation}`
+    : layer?.meta?.fileName || '';
+}
+
+function rgbaCss(color = []) {
+  const [r = 0, g = 0, b = 0, a = 255] = color;
+  return `rgba(${r}, ${g}, ${b}, ${Math.max(0, Math.min(255, a)) / 255})`;
+}
+
 const MapCanvas = React.memo(({
   viewState, setViewState, activeLayers, uraData, historicSitesData,
   trafficData, uploadedLayers, placedModels, setPlacedModels, selectedModelId,
@@ -145,6 +167,7 @@ const MapCanvas = React.memo(({
       ...fallbackStyle,
       ...(layer.style || {}),
     };
+    const isAnalysisLayer = layer.kind === 'analysis';
 
     return new GeoJsonLayer({
       id: `uploaded-geojson-layer-${layer.id}`,
@@ -154,10 +177,11 @@ const MapCanvas = React.memo(({
       autoHighlight: true,
       stroked: true,
       filled: true,
-      lineWidthMinPixels: Math.max(1.2, resolvedStyle.lineWidth || 1.4),
+      lineWidthMinPixels: Math.max(isAnalysisLayer ? 1.6 : 1.2, resolvedStyle.lineWidth || 1.4),
       pointRadiusMinPixels: 6,
       pointRadiusMaxPixels: 10,
       material: false,
+      opacity: isAnalysisLayer ? 0.96 : 0.9,
       getFillColor: (feature) => pickChoroplethColor(feature.properties, resolvedStyle),
       getLineColor: resolvedStyle.lineColor || fallbackStyle.lineColor,
       getPointRadius: 8,
@@ -174,6 +198,28 @@ const MapCanvas = React.memo(({
       }
     });
   }), [uploadedLayers, setSelectedBuilding, setSelectedGeoJsonFeature]);
+
+  const activeAnalysisLayer = useMemo(
+    () => [...uploadedLayers].filter((layer) => layer.active && layer.kind === 'analysis').at(-1) || null,
+    [uploadedLayers]
+  );
+
+  const activeAnalysisLegend = useMemo(() => {
+    const choropleth = activeAnalysisLayer?.style?.choropleth;
+    if (!choropleth?.field || !Array.isArray(choropleth.colors) || !choropleth.colors.length) {
+      return null;
+    }
+
+    return {
+      title: summarizeAnalysisTitle(activeAnalysisLayer),
+      subtitle: summarizeAnalysisSubtitle(activeAnalysisLayer),
+      field: choropleth.field,
+      entries: choropleth.colors.map((color, index) => ({
+        color,
+        label: choropleth.labels?.[index] || `Class ${index + 1}`,
+      })),
+    };
+  }, [activeAnalysisLayer]);
 
   const footTrafficLayer = new TripsLayer({
     id: 'foot-traffic-layer',
@@ -210,28 +256,62 @@ const MapCanvas = React.memo(({
   const sandboxLayers = createSandboxLayers(placedModels, activeLayers.sandbox, setPlacedModels, selectedModelId);
 
   return (
-    <DeckGL
-      ref={deckRef}
-      initialViewState={viewState}
-      onViewStateChange={({ viewState }) => setViewState(viewState)}
-      controller={!isPlacing}
-      getCursor={() => isPlacing ? 'crosshair' : 'grab'}
-      useDevicePixels={window.devicePixelRatio > 1 ? 1.5 : true}
-      _glOptions={{ preserveDrawingBuffer: true }}
-      layers={[
-        cartoBasemapLayer,
-        google3DTilesLayer,
-        ...uploadedGeoJsonLayers,
-        uraLayer,
-        historicSitesLayer,
-        footTrafficLayer,
-        vehicleTrafficLayer,
-        ...sandboxLayers
-      ].filter(Boolean)}
-      parameters={{ clearColor: [0.95, 0.95, 0.95, 1] }}
-      effects={[lightingEffect]}
-      onClick={handleDeckClick}
-    />
+    <>
+      <DeckGL
+        ref={deckRef}
+        initialViewState={viewState}
+        onViewStateChange={({ viewState }) => setViewState(viewState)}
+        controller={!isPlacing}
+        getCursor={() => isPlacing ? 'crosshair' : 'grab'}
+        useDevicePixels={window.devicePixelRatio > 1 ? 1.5 : true}
+        _glOptions={{ preserveDrawingBuffer: true }}
+        layers={[
+          cartoBasemapLayer,
+          google3DTilesLayer,
+          ...uploadedGeoJsonLayers,
+          uraLayer,
+          historicSitesLayer,
+          footTrafficLayer,
+          vehicleTrafficLayer,
+          ...sandboxLayers
+        ].filter(Boolean)}
+        parameters={{ clearColor: [0.95, 0.95, 0.95, 1] }}
+        effects={[lightingEffect]}
+        onClick={handleDeckClick}
+      />
+
+      {activeAnalysisLayer && (
+        <div className="pointer-events-none absolute top-6 left-[22rem] z-10 max-w-xl">
+          <div className="border border-[#d8ccb8] bg-[#F7F1E6]/95 px-4 py-3 shadow-sm backdrop-blur-sm">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-[#7A1F12]">Active Analysis Layer</p>
+            <h3 className="mt-1 font-serif text-lg text-[#33291F]">{summarizeAnalysisTitle(activeAnalysisLayer)}</h3>
+            <p className="mt-1 text-xs text-[#6d6153]">{summarizeAnalysisSubtitle(activeAnalysisLayer)}</p>
+          </div>
+        </div>
+      )}
+
+      {activeAnalysisLegend && (
+        <div className="pointer-events-none absolute bottom-6 left-[22rem] z-10 w-64">
+          <div className="border border-[#d8ccb8] bg-[#F7F1E6]/96 p-4 shadow-sm backdrop-blur-sm">
+            <p className="font-serif text-sm text-[#33291F]">{activeAnalysisLegend.title}</p>
+            <p className="mt-1 text-[10px] uppercase tracking-[0.18em] text-[#6d6153]">
+              {activeAnalysisLegend.field.replace(/_/g, ' ')}
+            </p>
+            <div className="mt-3 space-y-2">
+              {activeAnalysisLegend.entries.map((entry, index) => (
+                <div key={`${activeAnalysisLegend.field}-${index}`} className="flex items-center gap-3 text-xs text-[#33291F]">
+                  <span
+                    className="h-4 w-4 shrink-0 rounded-full border border-[#8e7c67]"
+                    style={{ backgroundColor: rgbaCss(entry.color) }}
+                  />
+                  <span>{entry.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 });
 
